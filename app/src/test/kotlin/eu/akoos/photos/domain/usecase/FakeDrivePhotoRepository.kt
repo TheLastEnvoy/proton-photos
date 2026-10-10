@@ -32,6 +32,7 @@ import eu.akoos.photos.data.repository.drive.UploadPhase
 import eu.akoos.photos.data.repository.drive.UploadXAttrMetadata
 import eu.akoos.photos.domain.entity.Album
 import eu.akoos.photos.domain.entity.AlbumChild
+import eu.akoos.photos.domain.entity.AlbumNotFoundException
 import eu.akoos.photos.domain.entity.CloudPhoto
 import eu.akoos.photos.domain.entity.CloudTrashItem
 import eu.akoos.photos.domain.entity.LocalMediaItem
@@ -40,6 +41,7 @@ import eu.akoos.photos.domain.entity.ShareInvitation
 import eu.akoos.photos.domain.entity.ShareMember
 import eu.akoos.photos.domain.entity.SharedPhoto
 import eu.akoos.photos.domain.repository.DrivePhotoRepository
+import eu.akoos.photos.domain.repository.VaultWipe
 import java.io.File
 
 /**
@@ -50,7 +52,12 @@ import java.io.File
  *    and returns it.
  *  - [deleteFiles] removes matching linkIds from the list.
  *  - [addPhotosToAlbum] records membership into [albumMembership]; [failAddPhotosOnce] flips it to throw
- *    exactly once (the transient-failure scenarios).
+ *    exactly once (the transient-failure scenarios), and [rejectAddPhotosOnce] to report every photo as
+ *    failed in its result exactly once, the way the real add reports an unsent or refused photo;
+ *    [loseAddReplyOnce] records the membership yet reports it failed. An album in [goneAlbums] throws
+ *    [AlbumNotFoundException] on every add. [loadAlbumChildren] lists the recorded membership.
+ *  - [onUploadStarted] runs inside [uploadFile] before anything is recorded, while the uploading row is
+ *    still claimed, so a caller can act on a photo mid-upload.
  *  - [getAlbumIdsByPhoto] returns the seeded [albumIdsByPhoto] map.
  *  - [downloadFullResPhoto] returns a throwaway temp file carrying [downloadBytes].
  *  - [callLog] records the order of upload / add / delete calls so ordering invariants can be asserted.
@@ -80,6 +87,29 @@ internal class FakeDrivePhotoRepository : DrivePhotoRepository {
     /** When non-null, the next [addPhotosToAlbum] call throws this exact throwable, then clears it.
      *  Same purpose as [uploadErrorOnce] for the album re-add path. */
     var addPhotosErrorOnce: Throwable? = null
+
+    /** When true, the next [addPhotosToAlbum] call returns every photo as failed without adding any,
+     *  then resets itself. Models a request that never reached the server or a refused entry, which
+     *  the real add reports in its result rather than by throwing. */
+    var rejectAddPhotosOnce = false
+
+    /** When true, the next [addPhotosToAlbum] call records the membership but still returns every
+     *  photo as failed, then resets itself. Models an add that landed while its reply was lost. */
+    var loseAddReplyOnce = false
+
+    /** Albums Drive no longer holds: every [addPhotosToAlbum] aimed at one throws
+     *  [AlbumNotFoundException], the way the real add reports a deleted album. */
+    val goneAlbums = mutableSetOf<String>()
+
+    /** Albums shared with this user that it may add to, as [loadSharedAddableAlbumsCached] lists them. */
+    val sharedAddableAlbums = mutableListOf<Album>()
+
+    /** Albums that report every photo as failed on each [addPhotosToAlbum], without adding any: a
+     *  shared album whose copy keeps being refused. */
+    val refusingAlbums = mutableSetOf<String>()
+
+    /** Runs at the start of every [uploadFile] call, while the upload is in flight. */
+    var onUploadStarted: (suspend (LocalMediaItem) -> Unit)? = null
 
     /** When true, the next [uploadFile] call throws a [kotlinx.coroutines.CancellationException] before
      *  recording anything, then resets itself. Models the user cancelling a replace mid-upload so a
@@ -125,6 +155,7 @@ internal class FakeDrivePhotoRepository : DrivePhotoRepository {
         xAttrMetadata: UploadXAttrMetadata,
         onProgress: ((phase: UploadPhase, doneBytes: Long, totalBytes: Long) -> Unit)?,
     ): String {
+        onUploadStarted?.invoke(item)
         if (cancelUploadOnce) {
             cancelUploadOnce = false
             throw kotlinx.coroutines.CancellationException("simulated upload cancel")
@@ -162,12 +193,27 @@ internal class FakeDrivePhotoRepository : DrivePhotoRepository {
         photoLinkIds: List<String>,
     ): DrivePhotoRepository.AddPhotosToAlbumResult {
         callLog += "ADD:$albumLinkId"
+        if (albumLinkId in goneAlbums) throw AlbumNotFoundException(albumLinkId)
         addPhotosErrorOnce?.let { addPhotosErrorOnce = null; throw it }
         if (failAddPhotosOnce) {
             failAddPhotosOnce = false
             error("simulated transient album-add failure")
         }
+        if (rejectAddPhotosOnce || albumLinkId in refusingAlbums) {
+            rejectAddPhotosOnce = false
+            return DrivePhotoRepository.AddPhotosToAlbumResult(
+                succeededLinkIds = emptyList(),
+                failedLinkIds = photoLinkIds,
+            )
+        }
         albumMembership.getOrPut(albumLinkId) { mutableListOf() }.addAll(photoLinkIds)
+        if (loseAddReplyOnce) {
+            loseAddReplyOnce = false
+            return DrivePhotoRepository.AddPhotosToAlbumResult(
+                succeededLinkIds = emptyList(),
+                failedLinkIds = photoLinkIds,
+            )
+        }
         return DrivePhotoRepository.AddPhotosToAlbumResult(
             succeededLinkIds = photoLinkIds,
             failedLinkIds = emptyList(),
@@ -215,13 +261,18 @@ internal class FakeDrivePhotoRepository : DrivePhotoRepository {
     override suspend fun refreshCloudPhotos(userId: UserId, force: Boolean) {}
     override suspend fun refreshCloudPhotosIncremental(userId: UserId) {}
     override suspend fun loadAlbumsCached(): List<Album> = emptyList()
-    override suspend fun loadSharedAddableAlbumsCached(): List<Album> = emptyList()
+
+    override fun observeAlbumsCached(): Flow<List<Album>> = kotlinx.coroutines.flow.flowOf(emptyList())
+
+    override suspend fun getCachedAlbumIdsForPhoto(photoLinkId: String): Set<String> = emptySet()
+    override suspend fun loadSharedAddableAlbumsCached(): List<Album> = sharedAddableAlbums.toList()
     override suspend fun loadSharedWithMeAlbumsCached(): List<Album> = emptyList()
     override suspend fun prefetchAlbumsMembership(userId: UserId, albums: List<Album>) {}
     override suspend fun prefetchSharedAlbumsMembership(userId: UserId, albums: List<Album>) {}
     override suspend fun prefetchSharedAlbumCovers(userId: UserId, albums: List<Album>) {}
     override suspend fun getAlbumMemberships(userId: UserId): Map<String, String> = emptyMap()
-    override suspend fun loadAlbumChildren(userId: UserId, albumLinkId: String): List<AlbumChild> = emptyList()
+    override suspend fun loadAlbumChildren(userId: UserId, albumLinkId: String): List<AlbumChild> =
+        albumMembers(albumLinkId).map { AlbumChild(linkId = it, captureTime = null, addedTime = null) }
     override suspend fun loadAlbumPhotos(
         userId: UserId,
         albumLinkId: String,
@@ -300,7 +351,7 @@ internal class FakeDrivePhotoRepository : DrivePhotoRepository {
     override suspend fun loadPendingInvitations(userId: UserId): List<PendingInvitation> = emptyList()
     override suspend fun declineInvitation(userId: UserId, invitationId: String) {}
     override suspend fun acceptInvitation(userId: UserId, invitationId: String) {}
-    override suspend fun clearCacheForSignOut(userId: UserId) {}
+    override suspend fun clearCacheForSignOut(userId: UserId, vault: VaultWipe) {}
     override fun requestThumbnailDecrypt(userId: UserId, linkId: String) {}
     override fun cancelThumbnailDecrypt(linkId: String) {}
     override fun prefetchThumbnailDecrypt(userId: UserId, linkIds: List<String>) {}

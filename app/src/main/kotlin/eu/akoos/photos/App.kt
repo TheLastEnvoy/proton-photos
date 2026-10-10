@@ -102,12 +102,15 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
     }
 
     override fun onCreate() {
+        // Taken before anything in this process can start writing ML sync scratch files.
+        val processStartMs = System.currentTimeMillis()
         super.onCreate() // Hilt injects workerFactory here
         installCrashLogHandler()
         // The :crypto process shares this Application but must skip the main-process init below
         // (WorkManager schedules, lifecycle observer, receivers, Coil) to avoid duplicate workers.
         if (!isMainProcess()) return
         delegatingFactory.addFactory(workerFactory)
+        sweepMlSyncScratch(processStartMs)
         // Drop crash records left over from a version this build replaced, so a diagnostics bundle copied
         // after an update carries only this build's crashes rather than a prior version's history. Keeps
         // this version's own blocks, so a real crash from an earlier session on this build survives.
@@ -224,6 +227,12 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
                     .append("MB nativeMB=").append(nativeMb)
                     .append(" libraryPhotos=").append(eu.akoos.photos.util.PerfDiagnostics.libraryPhotoCount)
                     .append('\n')
+            }
+            // The last phase markers (numbers only), so an OOM record shows which phase was growing the
+            // heap: the in-memory marker ring dies with the process, this copy does not.
+            runCatching {
+                val phases = eu.akoos.photos.util.PerfDiagnostics.phaseTail()
+                if (phases.isNotBlank()) append(phases).append('\n')
             }
             append('\n')
         }
@@ -360,6 +369,17 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
                     Log.d("App", "Restored $restored original(s) after an interrupted mirror overwrite")
                 }
             }
+        }
+    }
+
+    /**
+     * Deletes the face and search data an ML sync import or export left in the clear under the cache
+     * when its process was killed part way. Only files older than [processStartMs] go, so a run this
+     * process has already started keeps its own.
+     */
+    private fun sweepMlSyncScratch(processStartMs: Long) {
+        appScope.launch {
+            runCatching { eu.akoos.photos.data.mlsync.MlSyncScratch.sweep(cacheDir, before = processStartMs) }
         }
     }
 

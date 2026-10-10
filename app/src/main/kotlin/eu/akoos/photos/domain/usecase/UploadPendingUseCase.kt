@@ -70,6 +70,7 @@ import eu.akoos.photos.util.ExifDateFormat
 import eu.akoos.photos.util.ExifHelper
 import eu.akoos.photos.util.MetadataStripConfig
 import eu.akoos.photos.util.Mp4CreationTime
+import eu.akoos.photos.util.PerfDiagnostics
 import java.io.File
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -81,7 +82,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.coroutineContext
 
 private const val UPLOAD_TAG = "UploadUseCase"
 
@@ -122,6 +122,16 @@ private const val VIDEO_PIPELINE_DEPTH = 2
  * to the Android 14+ foreground-service daily-budget exhaustion.
  */
 private const val UPLOAD_PARALLELISM = 3
+
+/**
+ * Least gap between two album-changed signals sent for queued photos joining their albums. Each
+ * signal reloads the album list from the server, so a batch landing a photo every second or two
+ * shares one reload per gap instead of paying one per photo.
+ */
+private const val ALBUM_JOIN_SIGNAL_GAP_MS = 5_000L
+
+/** Passes a queued add to an album shared with this user may miss before the pair is let go. */
+internal const val FOREIGN_ALBUM_JOIN_ATTEMPTS = 5
 
 /**
  * Per-file upload event surfaced to UI (Settings sync progress).
@@ -187,8 +197,15 @@ class UploadPendingUseCase @Inject constructor(
     private val videoCompression: VideoUploadCompression,
     @ApplicationContext private val context: Context,
     @eu.akoos.photos.di.AppScope private val appScope: kotlinx.coroutines.CoroutineScope,
+    private val albumListEvents: eu.akoos.photos.util.AlbumListEventBus,
 ) {
     private val mutex = Mutex()
+
+    /** Set from an album-changed signal until [ALBUM_JOIN_SIGNAL_GAP_MS] has passed (see [signalAlbumJoin]). */
+    private val albumJoinSignalBusy = AtomicBoolean(false)
+
+    /** A queued photo joined its album while [albumJoinSignalBusy] held, so one more signal is owed. */
+    private val albumJoinSignalOwed = AtomicBoolean(false)
 
     /** Crash-consistent backup of the bytes a mirror overwrite is about to replace. Lives in
      *  filesDir (never cacheDir), so a process killed mid-truncate is recovered on the next launch
@@ -304,6 +321,9 @@ class UploadPendingUseCase @Inject constructor(
     suspend operator fun invoke(
         userId: UserId,
     ): Result = mutex.withLock {
+        // The pending count is known only after the selection below, so each return's end mark
+        // carries the count the pass attempted.
+        PerfDiagnostics.mark("upload:start", 0)
         // Fresh batch: clear any stop left over from a previous run so a later natural trigger
         // (new photo / periodic / app-open) resumes normally. The flag only affects the batch that
         // was in flight when the user tapped stop.
@@ -351,6 +371,7 @@ class UploadPendingUseCase @Inject constructor(
 
         val stripOnUpload = prefs[SettingsKeys.STRIP_ON_UPLOAD] ?: false
         val compressOnUpload = prefs[SettingsKeys.COMPRESS_ON_UPLOAD] ?: false
+        val compressHdrPhotos = prefs[SettingsKeys.COMPRESS_HDR_PHOTOS] ?: false
         val compressTier = UploadCompressionTier
             .fromOrdinalOrDefault(prefs[SettingsKeys.COMPRESS_UPLOAD_TIER] ?: -1)
         // #108: the video path re-encodes at its own tier, seeded from the shared value on upgrade.
@@ -382,12 +403,7 @@ class UploadPendingUseCase @Inject constructor(
         // add still lands even when backup is otherwise idle.
         for (target in uploadAlbumTargetDao.getAll()) {
             val cloudId = syncStateRepo.getByUri(target.localUri)?.cloudFileId ?: continue
-            runCatching { cloudRepo.addPhotosToAlbum(userId, target.albumLinkId, listOf(cloudId)) }
-                .onSuccess {
-                    uploadAlbumTargetDao.deleteTarget(target.localUri, target.albumLinkId)
-                    Log.d(UPLOAD_TAG, "Drained pending add: $cloudId → album ${target.albumLinkId}")
-                }
-                .onFailure { e -> Log.w(UPLOAD_TAG, "Pending-add drain failed for ${target.localUri}: ${e.message}") }
+            joinQueuedAlbum(userId, target.localUri, target.albumLinkId, cloudId)
         }
 
         // One snapshot of every SyncState row, read once up front so the explicit-action bypass
@@ -414,8 +430,9 @@ class UploadPendingUseCase @Inject constructor(
         // here, before the Wi-Fi and listing deferrals, which would otherwise report "Waiting for
         // Wi-Fi" or "Preparing backup" for a backup that isn't set up.
         if (!backupEverything && (selectedFolders == null || selectedFolders.isEmpty()) && !hasExplicitBypass) {
-            Log.d(UPLOAD_TAG, "No backup folders configured — skipping upload")
+            Log.d(UPLOAD_TAG, "No backup folders configured, skipping upload")
             _progress.tryEmit(UploadProgress("", "", UploadStatus.Idle, 0, 0))
+            PerfDiagnostics.mark("upload:end", 0)
             return@withLock Result(attempted = 0, successCount = 0)
         }
 
@@ -428,6 +445,7 @@ class UploadPendingUseCase @Inject constructor(
         if (wifiOnly && !hasExplicitBypass && !networkObserver.currentlyOnWifi()) {
             Log.d(UPLOAD_TAG, "Wi-Fi-only on and not on Wi-Fi — skipping auto-sync upload")
             _progress.tryEmit(UploadProgress("", "", UploadStatus.WaitingForWifi, 0, 0))
+            PerfDiagnostics.mark("upload:end", 0)
             return@withLock Result(attempted = 0, successCount = 0)
         }
 
@@ -448,6 +466,7 @@ class UploadPendingUseCase @Inject constructor(
         if ((!initialListingComplete || !pairingSettled) && !hasExplicitBypass) {
             Log.d(UPLOAD_TAG, "Cloud listing/pairing not settled yet — deferring bulk upload to avoid duplicates")
             _progress.tryEmit(UploadProgress("", "", UploadStatus.PreparingBackup, 0, 0))
+            PerfDiagnostics.mark("upload:end", 0)
             return@withLock Result(attempted = 0, successCount = 0)
         }
 
@@ -457,9 +476,11 @@ class UploadPendingUseCase @Inject constructor(
         // LOCAL_ONLY filter below and the cloudFileId-keyed album drain above, so the photo shows
         // "uploading" forever and redoing the album-add never re-queues it. Reset such rows to a clean
         // LOCAL_ONLY so this pass uploads them and then joins the album. HIDDEN is left untouched (the
-        // user moved it out of backup on purpose), matching ForceUploadLocalUrisUseCase. Manual/stuck
-        // UPLOADING rows are covered by resetStaleUploadingClaims + the stranded-intent recovery, so no
-        // separate manual set is needed here.
+        // user moved it out of backup on purpose), matching ForceUploadLocalUrisUseCase. So is UPLOADING:
+        // resetStaleUploadingClaims already reset the claims a dead process stranded, so one seen here is
+        // a live upload (an editor or metadata save runs outside this lock, and an album-add can target a
+        // photo mid-upload), and resetting it would upload the photo a second time. Manual rows are
+        // covered by the stranded-intent recovery, so no separate manual set is needed here.
         val albumTargetUris: Set<String> = uploadAlbumTargetDao.getAll().map { it.localUri }.toSet()
 
         // A device file queued for a cloud metadata edit is owned end to end by MetadataEditWorker (via
@@ -474,6 +495,7 @@ class UploadPendingUseCase @Inject constructor(
                 it.localUri !in metadataEditUris &&
                 it.cloudFileId == null &&
                 it.status != SyncStatus.LOCAL_ONLY &&
+                it.status != SyncStatus.UPLOADING &&
                 it.status != SyncStatus.HIDDEN
         }
         if (strandedForced.isNotEmpty()) {
@@ -556,7 +578,7 @@ class UploadPendingUseCase @Inject constructor(
         // for the video lane.
         var mimeByUri: Map<String, String> = emptyMap()
         if (pending.isNotEmpty()) {
-            val listing = localRepo.observeLocalMedia().first()
+            val listing = localRepo.freshMedia()
             mimeByUri = listing.associate { it.uri to it.mimeType }
             val bucketByUri: Map<String, String?> = listing.associate { it.uri to it.bucketName }
             val before = pending.size
@@ -584,6 +606,7 @@ class UploadPendingUseCase @Inject constructor(
         if (pending.isEmpty()) {
             Log.d(UPLOAD_TAG, "No pending items to upload")
             _progress.tryEmit(UploadProgress("", "", UploadStatus.Idle, 0, 0))
+            PerfDiagnostics.mark("upload:end", 0)
             return@withLock Result(attempted = 0, successCount = 0)
         }
         Log.d(UPLOAD_TAG, "Starting upload of ${pending.size} pending item(s)")
@@ -628,20 +651,18 @@ class UploadPendingUseCase @Inject constructor(
         val finishedCount = AtomicInteger(0)
         val totalCount = pending.size
 
-        // Bounded-parallel upload: at most UPLOAD_PARALLELISM photos in flight at once. Matches
-        // the CDN-block parallelism inside PhotoUploadService so a single batch fully uses the
-        // pipe without over-subscribing it.
+        // The batch's upload slots. At most UPLOAD_PARALLELISM uploads are on the wire at once, matching the
+        // CDN-block parallelism inside PhotoUploadService so a single batch fully uses the pipe without
+        // over-subscribing it. A video hands its slot back while it transcodes (see [releasedWhile]).
         val uploadSemaphore = Semaphore(UPLOAD_PARALLELISM)
-        // Compressible videos take this before an upload slot (see [VIDEO_PIPELINE_DEPTH]).
-        val videoLane = Semaphore(VIDEO_PIPELINE_DEPTH)
         // Album-cache mutations (read-check-create-publish) race when multiple uploads target
         // the same new album. Guard cache reads/writes + the DataStore persist with this mutex
         // so two parallel uploads of "Camera" photos don't both call createDriveAlbum.
         val albumCacheMutex = Mutex()
 
         // Storage-full is a fatal-for-batch signal: the OS won't accept more bytes for *anyone*.
-        // Set this flag from inside an async task; remaining tasks check it before doing CPU
-        // work so we don't pointlessly compute hashes for files that can't upload. AtomicBoolean
+        // Set from inside a running upload; the workers check it before starting the next row, so
+        // no hash is computed for a file that can't upload. AtomicBoolean
         // (not @Volatile var — @Volatile is a field-only annotation, not allowed on locals)
         // gives us safe cross-coroutine writes.
         val storageFullHit = AtomicBoolean(false)
@@ -653,61 +674,51 @@ class UploadPendingUseCase @Inject constructor(
         val savedBytes = AtomicLong(0L)
 
         try {
+            // Compressible videos run in their own small pool, so a queue of them never holds up the photos;
+            // both pools share the batch's upload slots, which is what caps the network at UPLOAD_PARALLELISM.
+            // The stop and storage-full flags are plain booleans read before each row is claimed, never a
+            // cancellation: a stop keeps the remaining rows from starting while an upload already running
+            // finishes.
+            val (videos, others) = pending.partition { state ->
+                compressVideosOnUpload && mimeByUri[state.localUri]?.startsWith("video/") == true
+            }
+            val shouldStop = { stopRequested.get() || storageFullHit.get() }
+            suspend fun upload(state: SyncState) = uploadSemaphore.withPermit {
+                // Re-check after taking the slot: rows ahead may have set a flag while this one waited.
+                if (shouldStop()) return@withPermit
+                uploadOne(
+                    userId = userId,
+                    state = state,
+                    totalCount = totalCount,
+                    manualRun = manualRun,
+                    albumTargetUris = albumTargetUris,
+                    albumOptInFolders = albumOptInFolders,
+                    stripOnUpload = stripOnUpload,
+                    compressOnUpload = compressOnUpload,
+                    compressHdrPhotos = compressHdrPhotos,
+                    compressTier = compressTier,
+                    videoProfile = videoProfile,
+                    mirrorStripToLocal = mirrorStripToLocal,
+                    mirrorCompressToLocal = mirrorCompressToLocal,
+                    compressVideosOnUpload = compressVideosOnUpload,
+                    renameToCaptureDate = renameToCaptureDate,
+                    deleteLocalAfterBackup = deleteLocalAfterBackup,
+                    stripConfig = stripConfig,
+                    existingAlbumsByName = existingAlbumsByName,
+                    albumCache = albumCache,
+                    albumCacheMutex = albumCacheMutex,
+                    successCount = successCount,
+                    successUris = successUris,
+                    finishedCount = finishedCount,
+                    onStorageFull = { storageFullHit.set(true) },
+                    uploadSlot = uploadSemaphore,
+                    savedBytes = savedBytes,
+                )
+            }
             coroutineScope {
-                val jobs = pending.map { state ->
-                    async {
-                        // Item boundary. Check the cooperative stop flag and the storage-full flag
-                        // BEFORE claiming/starting this item, so a stop keeps the remaining queued
-                        // items from ever beginning while an already-running upload finishes. This is
-                        // a plain boolean, never a cancellation; an in-flight uploadOne is untouched.
-                        // ensureActive() only guards genuine scope teardown (process death); a normal
-                        // stop leaves the scope alive so it never fires here.
-                        coroutineContext.ensureActive()
-                        if (stopRequested.get() || storageFullHit.get()) return@async
-
-                        val transcodes = compressVideosOnUpload &&
-                            mimeByUri[state.localUri]?.startsWith("video/") == true
-                        suspend fun upload() = uploadSemaphore.withPermit {
-                            // Re-check after acquiring the permit — earlier tasks may have set
-                            // storageFullHit / stopRequested while we were queued.
-                            coroutineContext.ensureActive()
-                            if (stopRequested.get() || storageFullHit.get()) return@withPermit
-
-                            uploadOne(
-                                userId = userId,
-                                state = state,
-                                totalCount = totalCount,
-                                manualRun = manualRun,
-                                albumTargetUris = albumTargetUris,
-                                albumOptInFolders = albumOptInFolders,
-                                stripOnUpload = stripOnUpload,
-                                compressOnUpload = compressOnUpload,
-                                compressTier = compressTier,
-                                videoProfile = videoProfile,
-                                mirrorStripToLocal = mirrorStripToLocal,
-                                mirrorCompressToLocal = mirrorCompressToLocal,
-                                compressVideosOnUpload = compressVideosOnUpload,
-                                renameToCaptureDate = renameToCaptureDate,
-                                deleteLocalAfterBackup = deleteLocalAfterBackup,
-                                stripConfig = stripConfig,
-                                existingAlbumsByName = existingAlbumsByName,
-                                albumCache = albumCache,
-                                albumCacheMutex = albumCacheMutex,
-                                successCount = successCount,
-                                successUris = successUris,
-                                finishedCount = finishedCount,
-                                onStorageFull = { storageFullHit.set(true) },
-                                uploadSlot = uploadSemaphore,
-                                savedBytes = savedBytes,
-                            )
-                        }
-                        if (transcodes) videoLane.withPermit { upload() } else upload()
-                    }
-                }
-                // awaitAll surfaces the first thrown exception (and cancels the siblings).
-                // We swallow per-photo errors inside uploadOne so this only escapes for hard
-                // failures (e.g. coroutine cancellation), which we handle in the catch below.
-                jobs.awaitAll()
+                val videoPool = async { runUploadWorkers(videos, VIDEO_PIPELINE_DEPTH, shouldStop) { upload(it) } }
+                val photoPool = async { runUploadWorkers(others, UPLOAD_PARALLELISM, shouldStop) { upload(it) } }
+                awaitAll(videoPool, photoPool)
             }
         } catch (e: CancellationException) {
             Log.d(UPLOAD_TAG, "Upload batch cancelled — ${successCount.get()}/$totalCount succeeded before stop")
@@ -742,13 +753,14 @@ class UploadPendingUseCase @Inject constructor(
         // so this is the only moment anything can say why the backup went quiet.
         val closingStatus = if (storageFullHit.get()) UploadStatus.StorageFull else UploadStatus.Idle
         _progress.tryEmit(UploadProgress("", "", closingStatus, totalCount, totalCount))
+        PerfDiagnostics.mark("upload:end", pending.size)
         Result(attempted = pending.size, successCount = finalSuccess)
     }
 
     /**
-     * Upload a single pending photo. Extracted from [invoke] so the parallel loop can call it
-     * from inside `async { semaphore.withPermit { ... } }` blocks. Per-photo errors are caught
-     * here so one failure doesn't tear down siblings via structured concurrency.
+     * Upload a single pending photo. Extracted from [invoke] so each upload worker (see
+     * [runUploadWorkers]) can call it once per row. Per-photo errors are caught here so one
+     * failure doesn't tear down the other workers via structured concurrency.
      *
      * Progress emissions use [finishedCount] (atomic running tally) rather than the photo's
      * position in the source list — with parallel uploads, photo at index 5 may finish before
@@ -765,6 +777,7 @@ class UploadPendingUseCase @Inject constructor(
         albumOptInFolders: Set<String>,
         stripOnUpload: Boolean,
         compressOnUpload: Boolean,
+        compressHdrPhotos: Boolean,
         compressTier: UploadCompressionTier,
         videoProfile: VideoCompressionProfile,
         mirrorStripToLocal: Boolean,
@@ -863,8 +876,8 @@ class UploadPendingUseCase @Inject constructor(
             }
             // Once claimed, this item runs to completion. No stop/cancel check is placed between the
             // claim and the encrypt/upload below: interrupting an in-flight upload would tear down a
-            // native PGP call and crash the process. A user stop is honoured only at the item boundary
-            // in invoke() (before the claim), so a claimed item is never abandoned mid-pipeline. A row
+            // native PGP call and crash the process. A user stop is honoured only at the upload workers'
+            // item boundary (before the claim), so a claimed item is never abandoned mid-pipeline. A row
             // stranded UPLOADING by a genuine process death is recovered on the next pass.
             // Optional rename: derive cloud displayName from the source's capture timestamp
             // (MediaStore DATE_TAKEN). The on-device file keeps its own name unless "mirror to
@@ -1101,6 +1114,7 @@ class UploadPendingUseCase @Inject constructor(
                 eu.akoos.photos.data.upload.UploadImageCompressor.skipsCompressionForGainMap(
                     localItem.mimeType,
                     compressOnUpload,
+                    compressHdrPhotos,
                     hasGainMap = { structuralStripper.hasGainMapUpload(strippedUploadUri) },
                 )
             if (compressHasGainMap) {
@@ -1370,6 +1384,7 @@ class UploadPendingUseCase @Inject constructor(
                     !eu.akoos.photos.data.upload.UploadImageCompressor.skipsCompressionForGainMap(
                         localItem.mimeType,
                         compressOnUpload,
+                        compressHdrPhotos,
                         hasGainMap = { structuralStripper.hasGainMapUpload(state.localUri) },
                     )
                 ) {
@@ -1570,17 +1585,8 @@ class UploadPendingUseCase @Inject constructor(
             // User-queued album-adds for this freshly-uploaded photo, read from the target table (the
             // single source of truth). These are album linkIds directly (the user picked an existing
             // album for a local-only photo), so skip the bucket-name resolve/create the mirror loop
-            // above does. Best-effort like the mirror: each pair is dropped only on a successful add,
-            // and a failure leaves that pair for the next-pass drain so an album membership is never
-            // lost. A manual "back up now" has no target rows, so this loop is simply empty for it.
-            for (albumLinkId in uploadAlbumTargetDao.getTargetsFor(state.localUri)) {
-                runCatching { cloudRepo.addPhotosToAlbum(userId, albumLinkId, listOf(cloudId)) }
-                    .onSuccess {
-                        uploadAlbumTargetDao.deleteTarget(state.localUri, albumLinkId)
-                        Log.d(UPLOAD_TAG, "Added $cloudId to queued album $albumLinkId")
-                    }
-                    .onFailure { e -> Log.w(UPLOAD_TAG, "Queued album-add failed for $albumLinkId: ${e.message}") }
-            }
+            // above does. A manual "back up now" has no target rows, so this finds nothing for it.
+            joinQueuedAlbums(userId, state.localUri, cloudId)
         } catch (e: CancellationException) {
             // A user cancel (or an OS stop) can land mid-upload while this row is claimed UPLOADING
             // by the #69 fix. Release the claim back to LOCAL_ONLY first, otherwise the row stays
@@ -1638,6 +1644,137 @@ class UploadPendingUseCase @Inject constructor(
             strippedFile?.delete()
             compressedFile?.delete()
             tsFloorFile?.delete()
+        }
+    }
+
+    /**
+     * Joins a freshly uploaded photo, queued as [localUri] and now [cloudId] on Drive, to every album
+     * it was queued for. Each pair is settled on its own by [joinQueuedAlbum], so one album refusing
+     * the photo leaves its other albums unaffected.
+     */
+    private suspend fun joinQueuedAlbums(userId: UserId, localUri: String, cloudId: String) {
+        for (albumLinkId in uploadAlbumTargetDao.getTargetsFor(localUri)) {
+            joinQueuedAlbum(userId, localUri, albumLinkId, cloudId)
+        }
+    }
+
+    /**
+     * Adds [cloudId] to [albumLinkId] for the photo queued as [localUri], and drops the queued pair
+     * only once the album holds it. The add reports a photo it could not send, or one the server
+     * refused, in its result rather than by throwing, so the join is read from that result; short of
+     * it the pair stays for the next pass's drain and the membership is never lost. A refused add can
+     * also be one that landed on an earlier try whose reply never arrived, so the album's own children
+     * settle that case instead of a retry on every pass. A landed join goes out through [signalAlbumJoin].
+     *
+     * The one failure that drops the pair is [eu.akoos.photos.domain.entity.AlbumNotFoundException]:
+     * the album is gone, so no retry could ever land it. Only for a photo this account holds, though,
+     * because the drain also meets pairs another signed-in account queued, and an album of that
+     * account reads as missing from this one's volume.
+     *
+     * An album shared with this user takes a copy under a new link id, so its children can never
+     * confirm the join. A miss there is counted instead, and the pair is let go once
+     * [FOREIGN_ALBUM_JOIN_ATTEMPTS] passes have missed.
+     */
+    private suspend fun joinQueuedAlbum(userId: UserId, localUri: String, albumLinkId: String, cloudId: String) {
+        val foreign = isSharedWithMe(albumLinkId)
+        val added = runCatching { cloudRepo.addPhotosToAlbum(userId, albumLinkId, listOf(cloudId)) }
+            .onFailure { if (it is CancellationException) throw it }
+        val joined = cloudId in added.getOrNull()?.succeededLinkIds.orEmpty() ||
+            (added.isSuccess && !foreign && albumHoldsPhoto(userId, albumLinkId, cloudId))
+        if (added.exceptionOrNull() is eu.akoos.photos.domain.entity.AlbumNotFoundException &&
+            holdsPairing(userId, localUri, cloudId)
+        ) {
+            uploadAlbumTargetDao.deleteTarget(localUri, albumLinkId)
+            Log.w(UPLOAD_TAG, "Queued album-add for $albumLinkId dropped: the album no longer exists")
+            eu.akoos.photos.util.SyncDiagnostics.log(
+                "upload ${eu.akoos.photos.util.uploadLogRef(localUri)} album join dropped: album no longer exists",
+            )
+            return
+        }
+        if (!joined) {
+            val reason = added.exceptionOrNull()?.let { eu.akoos.photos.util.describeUploadFailure(it) }
+                ?: "not accepted"
+            Log.w(UPLOAD_TAG, "Queued album-add for $albumLinkId did not land: $reason")
+            eu.akoos.photos.util.SyncDiagnostics.log(
+                "upload ${eu.akoos.photos.util.uploadLogRef(localUri)} album join deferred: $reason",
+            )
+            if (foreign) noteSharedAlbumMiss(localUri, albumLinkId)
+            return
+        }
+        uploadAlbumTargetDao.deleteTarget(localUri, albumLinkId)
+        if (foreign) editSharedAlbumMisses { ForeignAlbumJoinMisses.clear(it, localUri, albumLinkId) }
+        signalAlbumJoin()
+        Log.d(UPLOAD_TAG, "Added $cloudId to queued album $albumLinkId")
+    }
+
+    /** Whether [albumLinkId] is an album shared with this user, by the same cached lookup the add
+     *  routes on. A lookup that fails reads as false, which keeps the owned album's handling. */
+    private suspend fun isSharedWithMe(albumLinkId: String): Boolean =
+        runCatching { cloudRepo.loadSharedAddableAlbumsCached().any { it.linkId == albumLinkId } }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(false)
+
+    /** Counts one more pass the queued add of [localUri] to the shared [albumLinkId] missed, and lets
+     *  the pair go once [FOREIGN_ALBUM_JOIN_ATTEMPTS] have. */
+    private suspend fun noteSharedAlbumMiss(localUri: String, albumLinkId: String) {
+        var misses = 0
+        editSharedAlbumMisses { entries ->
+            ForeignAlbumJoinMisses.bump(entries, localUri, albumLinkId).let { (next, count) ->
+                misses = count
+                next
+            }
+        }
+        if (misses < FOREIGN_ALBUM_JOIN_ATTEMPTS) return
+        uploadAlbumTargetDao.deleteTarget(localUri, albumLinkId)
+        editSharedAlbumMisses { ForeignAlbumJoinMisses.clear(it, localUri, albumLinkId) }
+        Log.w(UPLOAD_TAG, "Queued add to shared album $albumLinkId dropped after $misses missed passes")
+        eu.akoos.photos.util.SyncDiagnostics.log(
+            "upload ${eu.akoos.photos.util.uploadLogRef(localUri)} album join dropped: " +
+                "shared album did not take it in $misses passes",
+        )
+    }
+
+    /** Rewrites the shared-album miss counts through [change]. A failed write only loses a count. */
+    private suspend fun editSharedAlbumMisses(change: (Set<String>) -> Set<String>) {
+        runCatching {
+            context.settingsDataStore.edit { p ->
+                val current = p[SettingsKeys.FOREIGN_ALBUM_JOIN_MISSES] ?: emptySet()
+                val next = change(current)
+                if (next != current) p[SettingsKeys.FOREIGN_ALBUM_JOIN_MISSES] = next
+            }
+        }.onFailure { if (it is CancellationException) throw it }
+    }
+
+    /** Whether this account's own row pairs [localUri] to [cloudId]. A read that fails reads as false,
+     *  which keeps the pair queued. */
+    private suspend fun holdsPairing(userId: UserId, localUri: String, cloudId: String): Boolean =
+        runCatching { syncStateRepo.cloudPairedLinkIds(userId, listOf(localUri))[localUri] == cloudId }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(false)
+
+    /** Whether [albumLinkId] already lists [cloudId] among its photos. A listing that fails reads as
+     *  false, which keeps the pair queued. */
+    private suspend fun albumHoldsPhoto(userId: UserId, albumLinkId: String, cloudId: String): Boolean =
+        runCatching { cloudRepo.loadAlbumChildren(userId, albumLinkId).any { it.linkId == cloudId } }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(false)
+
+    /**
+     * Tells the album grid and an open album that a queued photo joined its album, so they reload it.
+     * Each reload fetches the album list from the server, so the first join signals at once and every
+     * join inside the [ALBUM_JOIN_SIGNAL_GAP_MS] after it shares one more signal when the gap ends,
+     * instead of a batch paying one reload per photo.
+     */
+    private fun signalAlbumJoin() {
+        if (!albumJoinSignalBusy.compareAndSet(false, true)) {
+            albumJoinSignalOwed.set(true)
+            return
+        }
+        albumListEvents.notifyChanged()
+        appScope.launch {
+            kotlinx.coroutines.delay(ALBUM_JOIN_SIGNAL_GAP_MS)
+            albumJoinSignalBusy.set(false)
+            if (albumJoinSignalOwed.getAndSet(false)) signalAlbumJoin()
         }
     }
 
@@ -2109,5 +2246,61 @@ internal suspend fun <T> Semaphore.releasedWhile(block: suspend () -> T): T {
         return block()
     } finally {
         withContext(NonCancellable) { acquire() }
+    }
+}
+
+/**
+ * #123: runs [process] over [items] on [workers] coroutines, each taking the next item no worker has
+ * started. Items start in list order, at most [workers] run at once, and the batch holds [workers]
+ * coroutines however long [items] is.
+ *
+ * Before taking an item a worker checks for cancellation and asks [shouldStop]. A true [shouldStop]
+ * ends the batch at that boundary: no further item starts, and an item already running is left to
+ * finish. [process] contains its own per-item failures; anything that escapes it, a stray
+ * cancellation included, cancels the other workers and is rethrown to the caller.
+ */
+internal suspend fun <T> runUploadWorkers(
+    items: List<T>,
+    workers: Int,
+    shouldStop: () -> Boolean,
+    process: suspend (T) -> Unit,
+) {
+    require(workers > 0) { "workers must be positive: $workers" }
+    val next = AtomicInteger(0)
+    coroutineScope {
+        List(minOf(workers, items.size)) {
+            async {
+                while (true) {
+                    ensureActive()
+                    if (shouldStop()) break
+                    val index = next.getAndIncrement()
+                    if (index >= items.size) break
+                    process(items[index])
+                }
+            }
+        }.awaitAll()
+    }
+}
+
+/**
+ * The miss counts behind [FOREIGN_ALBUM_JOIN_ATTEMPTS], kept as "count|albumLinkId|localUri" entries
+ * of [SettingsKeys.FOREIGN_ALBUM_JOIN_MISSES]. Neither a link id nor a content uri holds a '|'.
+ */
+internal object ForeignAlbumJoinMisses {
+
+    private fun pairKey(localUri: String, albumLinkId: String) = "$albumLinkId|$localUri"
+
+    /** [entries] with the pair's count raised by one, and that count. */
+    fun bump(entries: Set<String>, localUri: String, albumLinkId: String): Pair<Set<String>, Int> {
+        val key = pairKey(localUri, albumLinkId)
+        val previous = entries.firstOrNull { it.substringAfter('|') == key }
+        val count = (previous?.substringBefore('|')?.toIntOrNull() ?: 0) + 1
+        return (entries - setOfNotNull(previous) + "$count|$key") to count
+    }
+
+    /** [entries] without the pair's count. */
+    fun clear(entries: Set<String>, localUri: String, albumLinkId: String): Set<String> {
+        val key = pairKey(localUri, albumLinkId)
+        return entries.filterNotTo(HashSet()) { it.substringAfter('|') == key }
     }
 }

@@ -32,6 +32,7 @@ import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import dagger.hilt.android.qualifiers.ApplicationContext
+import eu.akoos.photos.data.upload.LocalOverwriteGuard
 import eu.akoos.photos.util.ExifDateFormat
 import eu.akoos.photos.util.ExifHelper
 import eu.akoos.photos.util.MetadataStripConfig
@@ -273,12 +274,15 @@ class WriteLocalPhotoMetadataUseCase @Inject constructor(
     private fun editExifViaFd(uri: String, mutate: (ExifInterface) -> Unit): MetadataWriteResult =
         try {
             val parsed = Uri.parse(uri)
-            val pfd = context.contentResolver.openFileDescriptor(parsed, "rw")
-                ?: return MetadataWriteResult.Failed("could not open $uri")
-            pfd.use {
-                val exif = ExifInterface(it.fileDescriptor)
-                mutate(exif)
-                exif.saveAttributes()
+            // The save rewrites the file in place, so it runs behind a backup that is put back when it fails.
+            LocalOverwriteGuard(context).run(uri) {
+                val pfd = context.contentResolver.openFileDescriptor(parsed, "rw")
+                    ?: throw java.io.IOException("could not open $uri")
+                pfd.use {
+                    val exif = ExifInterface(it.fileDescriptor)
+                    mutate(exif)
+                    exif.saveAttributes()
+                }
             }
             MetadataWriteResult.Success
         } catch (e: CancellationException) {
@@ -369,6 +373,13 @@ class WriteLocalPhotoMetadataUseCase @Inject constructor(
          *  [MVHD_STAMPABLE_MIMES]). Case- and parameter-insensitive. Pure. */
         internal fun isMvhdStampableMime(mimeType: String): Boolean =
             normalizeMime(mimeType) in MVHD_STAMPABLE_MIMES
+
+        /** True when a capture date written to a [mimeType] file reaches only the MediaStore column: the
+         *  container has neither an EXIF block ExifInterface can save nor an mvhd to stamp (HEIC, GIF, RAW,
+         *  a Matroska video). A media scan re-derives the column from the file, so such a date holds only
+         *  once the app also records it as a capture-date override. Pure. */
+        internal fun dateLivesOnlyInColumn(mimeType: String): Boolean =
+            !isExifWritableImageMime(mimeType) && !isMvhdStampableMime(mimeType)
 
         private fun normalizeMime(mimeType: String): String =
             mimeType.substringBefore(';').trim().lowercase(Locale.ROOT)

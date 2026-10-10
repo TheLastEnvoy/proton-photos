@@ -23,6 +23,8 @@
 package eu.akoos.photos.navigation
 
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -48,6 +50,7 @@ import eu.akoos.photos.presentation.theme.AppColors
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -75,6 +78,7 @@ import eu.akoos.photos.data.preferences.settingsDataStore
 import eu.akoos.photos.data.preferences.setContinueWithoutAccount
 import eu.akoos.photos.data.repository.drive.ThumbnailUrlStore
 import eu.akoos.photos.presentation.common.LocalViewerReturnKey
+import eu.akoos.photos.presentation.common.resolve
 import eu.akoos.photos.presentation.common.MapStyleChooserDialog
 import eu.akoos.photos.presentation.gallery.LocalThumbnailUrls
 import androidx.compose.runtime.CompositionLocalProvider
@@ -87,6 +91,7 @@ import eu.akoos.photos.presentation.albums.AlbumDetailScreen
 import eu.akoos.photos.presentation.albums.AlbumOpenAction
 import eu.akoos.photos.presentation.albums.AlbumPhotoPickerScreen
 import eu.akoos.photos.presentation.albums.AlbumPhotoPickerViewModel
+import eu.akoos.photos.presentation.albums.LibraryTile
 import eu.akoos.photos.presentation.auth.SignInScreen
 import eu.akoos.photos.presentation.calendar.CalendarScreen
 import eu.akoos.photos.presentation.calendar.DayDetailScreen
@@ -95,10 +100,13 @@ import eu.akoos.photos.presentation.editor.VideoEditorScreen
 import eu.akoos.photos.presentation.folders.DeviceFolderDetailScreen
 import eu.akoos.photos.presentation.folders.DeviceFolderOpenAction
 import eu.akoos.photos.presentation.gallery.GalleryScreen
+import eu.akoos.photos.presentation.gallery.GalleryPickScreen
 import eu.akoos.photos.presentation.gallery.localVideoUri
 import eu.akoos.photos.presentation.gallery.videoCloudPhoto
 import eu.akoos.photos.presentation.hidden.HiddenAlbumScreen
 import eu.akoos.photos.presentation.importer.ImportScreen
+import eu.akoos.photos.presentation.lock.LocalAppLock
+import eu.akoos.photos.presentation.lock.runWhenOpen
 import eu.akoos.photos.presentation.offline.OfflinePhotosScreen
 import eu.akoos.photos.presentation.people.PeopleScreen
 import eu.akoos.photos.presentation.people.ReviewSuggestionsScreen
@@ -135,9 +143,15 @@ import eu.akoos.photos.presentation.settings.TimelineLayoutScreen
 import eu.akoos.photos.presentation.settings.TimelineCategoriesScreen
 import eu.akoos.photos.presentation.settings.TimelineAlbumsScreen
 import eu.akoos.photos.presentation.settings.TimelineDeviceFoldersScreen
+import eu.akoos.photos.presentation.settings.AlbumsSettingsScreen
 import eu.akoos.photos.presentation.settings.BackupProcessingScreen
 import eu.akoos.photos.presentation.settings.SyncSettingsScreen
+import eu.akoos.photos.presentation.map.MAP_FOCUS_LAT_ARG
+import eu.akoos.photos.presentation.map.MAP_FOCUS_LON_ARG
+import eu.akoos.photos.presentation.map.MapFocus
 import eu.akoos.photos.presentation.map.MapScreen
+import eu.akoos.photos.presentation.map.mapFocusRoute
+import eu.akoos.photos.presentation.map.parseMapFocus
 import eu.akoos.photos.presentation.map.vector.CustomMapScreen
 import eu.akoos.photos.presentation.search.SearchScreen
 import eu.akoos.photos.presentation.settings.TrashScreen
@@ -163,6 +177,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 sealed class Screen(val route: String) {
     data object Gallery : Screen("gallery")
     data object Settings : Screen("settings")
+    data object Shared : Screen("shared")
+    data object MoreSettings : Screen("more_settings")
     data object SyncSettings : Screen("sync_settings")
     data object BackupProcessing : Screen("backup_processing")
     data object Activity : Screen("activity")
@@ -173,7 +189,6 @@ sealed class Screen(val route: String) {
     data object FaceExclusions : Screen("face_exclusions")
     data object FreeUpSpace : Screen("free_up_space")
     data object PrivacySecuritySettings : Screen("privacy_security_settings")
-    data object ShareMetadata : Screen("share_metadata")
     data object Permissions : Screen("permissions")
     data object Viewer : Screen("viewer")
     data object AlbumDetail : Screen("album_detail")
@@ -218,11 +233,24 @@ sealed class Screen(val route: String) {
     data object TimelineCategories : Screen("timeline_categories")
     data object TimelineAlbums : Screen("timeline_albums")
     data object TimelineDeviceFolders : Screen("timeline_device_folders")
-    data object Search : Screen("search")
-    data object Map : Screen("map")
 
-    /** Spike: the custom vector world map, reached from the osmdroid [Map] screen. */
-    data object CustomMap : Screen("custom_map")
+    /** The Albums tab's settings page, from the tab's filter sheet and from Appearance. */
+    data object AlbumsSettings : Screen("albums_settings")
+    data object LabelsSettings : Screen("labels_settings")
+    data object LabelPhotoPicker : Screen("label_photo_picker")
+    data object Search : Screen("search")
+
+    /** The classic map. Entry points navigate to the plain route; the destination registers [PATTERN],
+     *  whose optional `lat` / `lon` open it centred on one place (see [mapFocusRoute]). */
+    data object Map : Screen("map") {
+        const val PATTERN = "map?lat={lat}&lon={lon}"
+    }
+
+    /** Spike: the custom vector world map, reached from the osmdroid [Map] screen. Registered as
+     *  [PATTERN], with the same optional focus as [Map]. */
+    data object CustomMap : Screen("custom_map") {
+        const val PATTERN = "custom_map?lat={lat}&lon={lon}"
+    }
     data object Calendar : Screen("calendar")
     data object Memories : Screen("memories")
     data object MemoryCategory : Screen("memory_category/{type}") {
@@ -362,6 +390,8 @@ fun NavGraph(
     // screen's hidden preview trigger, so either place can raise the dialog rendered here at the root.
     val thankYouVm: ThankYouViewModel = hiltViewModel()
     val thanksVisible by thankYouVm.visible.collectAsStateWithLifecycle()
+    // A dialog raised on its own opens above the app lock, so the thank-you waits for the unlock.
+    val appLock = LocalAppLock.current
     // Which map the entry points open: false (default) = the modern world map, true = the classic OSM map.
     val mapEntryCtx = LocalContext.current
     val mapStyleOsm by remember(mapEntryCtx) {
@@ -373,10 +403,13 @@ fun NavGraph(
         mapEntryCtx.settingsDataStore.data.map { it[SettingsKeys.MAP_STYLE_PROMPTED] ?: false }
     }.collectAsStateWithLifecycle(initialValue = false)
     var showMapStyleChooser by remember { mutableStateOf(false) }
-    // When the chooser was raised by the on-map switch button (not the first-run prompt), the route of
-    // the map it came from, so a switch REPLACES that map instead of stacking a second one; null means
-    // the first-run prompt, which opens the chosen map fresh.
+    // When the chooser was raised by the on-map switch button (not the first-run prompt), the registered
+    // route pattern of the map it came from, so a switch REPLACES that map instead of stacking a second
+    // one; null means the first-run prompt, which opens the chosen map fresh.
     var mapStyleSwitchFrom by remember { mutableStateOf<String?>(null) }
+    // The place the chosen map opens centred on: the photo's place when the viewer's details raised the
+    // chooser, or the place the switched-from map was opened on; null for a plain open.
+    var mapStyleFocus by remember { mutableStateOf<MapFocus?>(null) }
     var selectedViewerItems by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var selectedViewerIndex by remember { mutableIntStateOf(0) }
     // The return leg of the line above: the photo the viewer closed on, for the grid underneath to
@@ -428,6 +461,8 @@ fun NavGraph(
     var collageItems by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
     // Photos the in-app picker returned to add to the open collage.
     var collagePicked by remember { mutableStateOf<List<GalleryItem>?>(null) }
+    // The labels the photo picker opened from the Labels settings adds the picked photos to.
+    var labelPickerTargets by remember { mutableStateOf<List<String>>(emptyList()) }
     // The source manager's confirmed selection returned to the open video editor. Null (the initial and
     // post-consume value) is the no-pick sentinel; a non-null list is a real return, so an empty one still
     // removes every deselected source rather than reading as "nothing picked".
@@ -616,8 +651,8 @@ fun NavGraph(
         LocalThumbnailUrls provides thumbnailUrlsState,
         LocalViewerReturnKey provides viewerReturnKey,
     ) {
-    // Routes that open with their own scale/zoom transition (Search), so the screen behind them holds
-    // still (fade only) instead of sliding, letting the scale read cleanly. Others keep the slide.
+    // Routes that open with their own full-width slide from the side (Search, the third tab of the dock), so
+    // the screen behind them holds still and is covered or uncovered by it, instead of moving too.
     val scaleOpenRoutes = setOf(Screen.Search.route)
     NavHost(
         navController = navController,
@@ -628,11 +663,11 @@ fun NavGraph(
         // The slide is small (a sixth of the width) so it also suits full-screen routes like the viewer.
         enterTransition = { fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 6 } },
         exitTransition = {
-            if (targetState.destination.route in scaleOpenRoutes) fadeOut(tween(200))
+            if (targetState.destination.route in scaleOpenRoutes) ExitTransition.None
             else fadeOut(tween(220)) + slideOutHorizontally(tween(220)) { -it / 12 }
         },
         popEnterTransition = {
-            if (initialState.destination.route in scaleOpenRoutes) fadeIn(tween(200))
+            if (initialState.destination.route in scaleOpenRoutes) EnterTransition.None
             else fadeIn(tween(220)) + slideInHorizontally(tween(220)) { -it / 12 }
         },
         popExitTransition = { fadeOut(tween(220)) + slideOutHorizontally(tween(220)) { it / 6 } },
@@ -725,8 +760,9 @@ fun NavGraph(
                 if (thankYouVm.shouldShow()) {
                     // On the 2.5.0 update the thank-you leads: it shows first, and What's New (if still
                     // pending) opens when it is dismissed. showReal marks it seen at once, so it is a
-                    // single lifetime appearance. The whatsNewChecked latch keeps this to one run.
-                    thankYouVm.showReal(thenWhatsNew = whatsNewPending)
+                    // single lifetime appearance, raised only once the app lock is open so it is not
+                    // marked seen behind the lock. The whatsNewChecked latch keeps this to one run.
+                    appLock.runWhenOpen { thankYouVm.showReal(thenWhatsNew = whatsNewPending) }
                 } else if (whatsNewPending) {
                     navController.navigate(Screen.WhatsNew.route)
                 }
@@ -777,7 +813,18 @@ fun NavGraph(
                 onSearchClick = { navController.navigate(Screen.Search.route) },
                 onCalendarClick = { navController.navigate(Screen.Calendar.route) },
                 onMemoriesClick = { navController.navigate(Screen.Memories.route) },
+                onOpenMap = {
+                    if (!mapStylePrompted) {
+                        showMapStyleChooser = true
+                    } else {
+                        navController.navigate(if (mapStyleOsm) Screen.Map.route else Screen.CustomMap.route)
+                    }
+                },
+                onOpenPeople = { navController.navigate(Screen.People.route) },
+                onOpenOffline = { navController.navigate(Screen.Offline.route) },
+                onOpenShared = { navController.navigate(Screen.Shared.route) },
                 onOpenTimelineFilter = { navController.navigate(Screen.TimelineFilter.route) },
+                onOpenAlbumsSettings = { navController.navigate(Screen.AlbumsSettings.route) },
                 onEditMetadata = { selection ->
                     // A timeline selection is the user's own library, never an album someone shared
                     // with them, so the editor's own per-item rules decide what is writable.
@@ -958,6 +1005,20 @@ fun NavGraph(
                 onDismissSuggestion = { candidateId -> personVm.dismissMergeSuggestion(personId, candidateId) },
                 onLeaveSuggestion = { personVm.clearMergeSuggestion() },
                 onPreviewCandidate = { candidateId -> navController.navigate(Screen.PersonDetail.create(candidateId)) },
+                onMergedInto = { targetId ->
+                    // Only while this page is on top, so a late result never pops another screen. When the
+                    // page below is already the person the group joined (it was opened from that person's
+                    // merge suggestion), going back to it is enough.
+                    if (navController.currentBackStackEntry?.id == backStackEntry.id) {
+                        val revealedPersonId = navController.previousBackStackEntry
+                            ?.takeIf { it.destination.route == Screen.PersonDetail.route }
+                            ?.arguments?.getLong("personId")
+                        navController.popBackStack()
+                        if (eu.akoos.photos.presentation.person.opensMergedPerson(revealedPersonId, targetId)) {
+                            navController.navigate(Screen.PersonDetail.create(targetId))
+                        }
+                    }
+                },
                 onFindMore = { navController.navigate(Screen.FindMorePhotos.create(personId)) },
             )
         }
@@ -1003,24 +1064,45 @@ fun NavGraph(
         }
 
         composable(Screen.Viewer.route) { backStackEntry ->
+            // The viewer's photos and flags arrive through the nav-scope state above, which a viewer
+            // opened on top of this one (from a person or a place page) rewrites. Each viewer entry
+            // takes its own copy the first time it composes and reads only that from then on, so
+            // backing out to it shows what it was opened with.
+            val inputsHolder = viewModel(viewModelStoreOwner = backStackEntry) {
+                ViewerInputsHolder(
+                    ViewerInputs(
+                        items = selectedViewerItems,
+                        initialIndex = selectedViewerIndex,
+                        hiddenCloudLinkIds = selectedViewerHiddenLinkIds,
+                        fromAlbum = viewerFromAlbum,
+                        album = selectedAlbum,
+                        trashMode = viewerTrashMode,
+                        secure = viewerSecure,
+                        autoplay = viewerAutoplay,
+                    ),
+                )
+            }
+            val inputs = inputsHolder.inputs
             // When the viewer was opened from an album, propagate the album linkId to the
             // viewer + editor so edited/renamed copies land back in the same album.
-            val sourceAlbumLinkId = if (viewerFromAlbum) selectedAlbum?.linkId else null
+            val sourceAlbumLinkId = if (inputs.fromAlbum) inputs.album?.linkId else null
             // A non-null `sharedByEmail` on the album means the user is a guest on someone else's
             // album. Held as one value so every screen the viewer opens is handed the same answer.
-            val readOnlyAlbum = viewerFromAlbum && selectedAlbum?.sharedByEmail != null
+            val readOnlyAlbum = inputs.fromAlbum && inputs.album?.sharedByEmail != null
             // Editor writes a timestamp to this entry's savedStateHandle on save; we observe
             // it so the viewer can force a re-load when we pop back into it.
             val editedAt by backStackEntry.savedStateHandle
                 .getStateFlow("photoEditedAt", 0L)
                 .collectAsStateWithLifecycle()
             PhotoViewerScreen(
-                items = selectedViewerItems,
-                initialIndex = selectedViewerIndex,
+                items = inputs.items,
+                initialIndex = inputs.initialIndex,
                 onBack = { settledKey ->
                     viewerSecure = false
                     viewerAutoplay = false
                     viewerTrashMode = false
+                    // The same resets on this entry's own copy, which is what the leaving viewer reads.
+                    inputsHolder.close()
                     viewerReturnKey.value = settledKey
                     leaveOverlayScreen()
                 },
@@ -1028,17 +1110,21 @@ fun NavGraph(
                 // Every mutating affordance in the viewer (delete / set-as-cover / favorite /
                 // rename / add-to-album / edit) collapses into a no-op + hides itself behind
                 // this flag.
-                isReadOnlyAlbum = readOnlyAlbum || viewerTrashMode,
+                isReadOnlyAlbum = readOnlyAlbum || inputs.trashMode,
                 // Taking a photo out of an album is an edit, so it follows the same right as
                 // adding rather than plain ownership. That makes it a separate question from
                 // isReadOnlyAlbum: an editor on a shared album may remove, and is exactly the
                 // person with no other route to it.
-                canRemoveFromAlbum = viewerFromAlbum && selectedAlbum?.canAddPhotos == true,
+                canRemoveFromAlbum = inputs.fromAlbum && inputs.album?.canAddPhotos == true,
                 editedAt = editedAt,
-                hiddenCloudLinkIds = selectedViewerHiddenLinkIds,
-                secure = viewerSecure,
-                startSlideshow = viewerAutoplay,
+                hiddenCloudLinkIds = inputs.hiddenCloudLinkIds,
+                secure = inputs.secure,
+                startSlideshow = inputs.autoplay,
                 onEditItem = { item ->
+                    // The editor reads the album context from nav scope, so this viewer's own goes back
+                    // there first, in case a viewer opened on top of this one rewrote it.
+                    viewerFromAlbum = inputs.fromAlbum
+                    if (inputs.fromAlbum) selectedAlbum = inputs.album
                     editorItem = item
                     navController.navigate(Screen.PhotoEditor.route)
                 },
@@ -1047,8 +1133,22 @@ fun NavGraph(
                     metadataEditorRequest = MetadataEditorRequest(listOf(item), readOnlyAlbum)
                     navController.navigate(Screen.MetadataEditor.route)
                 },
+                onOpenLabelsSettings = { navController.navigate(Screen.LabelsSettings.route) },
                 onOpenPerson = { personId -> navController.navigate(Screen.PersonDetail.create(personId)) },
-                trashMode = viewerTrashMode,
+                // The map in the user's style, centred on the photo's place. Before a style has ever been
+                // picked the one-time chooser comes first and carries the place through to the chosen map.
+                onOpenMapAt = { lat, lon ->
+                    val focus = MapFocus(lat, lon)
+                    if (!mapStylePrompted) {
+                        mapStyleFocus = focus
+                        showMapStyleChooser = true
+                    } else {
+                        navController.navigate(
+                            mapFocusRoute(if (mapStyleOsm) Screen.Map.route else Screen.CustomMap.route, focus),
+                        )
+                    }
+                },
+                trashMode = inputs.trashMode,
                 // The Trash screen owns both actions (device via its MediaStore launchers, cloud via
                 // its ViewModel), so the viewer records the action on the Trash back-stack entry and
                 // closes the same way onBack does.
@@ -1057,6 +1157,7 @@ fun NavGraph(
                         "trashViewerAction", trashActionString("restore", item),
                     )
                     viewerTrashMode = false
+                    inputsHolder.endTrashMode()
                     leaveOverlayScreen()
                 },
                 onTrashDeleteForever = { item ->
@@ -1064,6 +1165,7 @@ fun NavGraph(
                         "trashViewerAction", trashActionString("delete", item),
                     )
                     viewerTrashMode = false
+                    inputsHolder.endTrashMode()
                     leaveOverlayScreen()
                 },
             )
@@ -1409,24 +1511,32 @@ fun NavGraph(
             }
         }
 
-        composable(Screen.AlbumPhotoPicker.route) {
+        composable(Screen.AlbumPhotoPicker.route) { entry ->
             val album = selectedAlbum
             if (album == null) {
                 navController.popBackStack()
             } else {
-                AlbumPhotoPickerScreen(
+                // The gallery itself in picking mode, drawn from the gallery's own view model so its
+                // filters and categories are the ones the timeline has.
+                val galleryEntry = remember(entry) {
+                    runCatching { navController.getBackStackEntry(Screen.Gallery.route) }.getOrNull()
+                }
+                GalleryPickScreen(
                     albumLinkId = album.linkId,
                     albumName = album.name,
                     excludeLinkIds = pickerExcludeLinkIds,
                     onBack = { navController.popBackStack() },
                     // The album observes the add via AlbumListEventBus and refreshes itself.
                     onAdded = { navController.popBackStack() },
+                    viewModel = if (galleryEntry != null) hiltViewModel(galleryEntry) else hiltViewModel(),
                 )
             }
         }
 
-        composable(Screen.Settings.route) {
+        val settingsPage: @Composable (Boolean) -> Unit = { more ->
             SettingsScreen(
+                more                      = more,
+                onMoreSettingsClick       = { navController.navigate(Screen.MoreSettings.route) },
                 onBack                    = { navController.popBackStack() },
                 onSyncSettingsClick       = { navController.navigate(Screen.SyncSettings.route) },
                 onActivityClick           = { navController.navigate(Screen.Activity.route) },
@@ -1435,6 +1545,7 @@ fun NavGraph(
                 onPrivacySecurityClick    = { navController.navigate(Screen.PrivacySecuritySettings.route) },
                 onPermissionsClick        = { navController.navigate(Screen.Permissions.route) },
                 onNotificationsClick      = { navController.navigate(Screen.NotificationSettings.route) },
+                onLabelsClick             = { navController.navigate(Screen.LabelsSettings.route) },
                 onRecentlyDeletedClick    = { navController.navigate(Screen.Trash.route) },
                 onFindDuplicatesClick     = { navController.navigate(Screen.DuplicateFinder.route) },
                 onDebugNavigate           = { route -> navController.navigate(route) },
@@ -1442,14 +1553,30 @@ fun NavGraph(
                 onAppearanceClick         = { navController.navigate(Screen.AppearanceSettings.route) },
                 onLanguageClick           = { navController.navigate(Screen.LanguageSettings.route) },
                 onAboutClick              = { navController.navigate(Screen.About.route) },
-                onWhatsNewClick           = { navController.navigate(Screen.WhatsNewHistory.route) },
                 onNewsClick               = { navController.navigate(Screen.News.route) },
-                onFaqClick                = { navController.navigate(Screen.Faq.route) },
                 onAccountClick            = { navController.navigate(Screen.Account.route) },
                 onSignIn                  = { navController.navigate(Screen.Login.route) },
-                onCheckForUpdatesClick    = onCheckForUpdates,
                 // Inline settings search opens a result by its route; the screen resets its own query.
                 onOpenRoute               = { route -> navController.navigate(route) },
+            )
+        }
+        composable(Screen.Settings.route) { settingsPage(false) }
+        composable(Screen.MoreSettings.route) { settingsPage(true) }
+
+        composable(Screen.Shared.route) { entry ->
+            // The gallery has loaded the shared list already, so the page reads that one instead of
+            // loading it again behind a skeleton.
+            val galleryEntry = remember(entry) { navController.getBackStackEntry(Screen.Gallery.route) }
+            val sharedViewModel: eu.akoos.photos.presentation.shared.SharedViewModel = hiltViewModel(galleryEntry)
+            eu.akoos.photos.presentation.shared.SharedPage(
+                viewModel = sharedViewModel,
+                onBack = { navController.popBackStack() },
+                onAlbumClick = { album ->
+                    selectedAlbum = album
+                    albumOpenedToShare = false
+                    albumOpenAction = null
+                    navController.navigate(Screen.AlbumDetail.route)
+                },
             )
         }
 
@@ -1458,7 +1585,12 @@ fun NavGraph(
         }
 
         composable(Screen.About.route) {
-            AboutScreen(onBack = { navController.popBackStack() })
+            AboutScreen(
+                onBack = { navController.popBackStack() },
+                onWhatsNewClick = { navController.navigate(Screen.WhatsNewHistory.route) },
+                onFaqClick = { navController.navigate(Screen.Faq.route) },
+                onCheckForUpdatesClick = onCheckForUpdates,
+            )
         }
 
         composable(Screen.Faq.route) {
@@ -1471,7 +1603,57 @@ fun NavGraph(
                 onThemeClick = { navController.navigate(Screen.ThemeSettings.route) },
                 onLanguageClick = { navController.navigate(Screen.LanguageSettings.route) },
                 onTimelineFilterClick = { navController.navigate(Screen.TimelineFilter.route) },
+                onAlbumsSettingsClick = { navController.navigate(Screen.AlbumsSettings.route) },
+                onLandingTabClick = { navController.navigate(Screen.LandingTab.route) },
             )
+        }
+
+        composable(Screen.LabelsSettings.route) {
+            eu.akoos.photos.presentation.settings.LabelsSettingsScreen(
+                onBack = { navController.popBackStack() },
+                onAddPhotos = { labelNames ->
+                    labelPickerTargets = labelNames
+                    navController.navigate(Screen.LabelPhotoPicker.route)
+                },
+            )
+        }
+
+        composable(Screen.LabelPhotoPicker.route) {
+            // The album picker in "return" mode: it hands the picked photos to the labels chosen in the Labels
+            // settings, leaving out the photos that already carry all of them. It closes once the labels are written.
+            val targets = labelPickerTargets
+            if (targets.isEmpty()) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
+                val labelsVm = hiltViewModel<eu.akoos.photos.presentation.common.AddLabelsViewModel>()
+                val pickerContext = LocalContext.current
+                var alreadyLabelled by remember(targets) { mutableStateOf<Set<String>>(emptySet()) }
+                LaunchedEffect(targets) {
+                    alreadyLabelled = eu.akoos.photos.presentation.settings.photosCarryingAll(
+                        targets.map { labelsVm.photoKeysOf(it) },
+                    )
+                }
+                AlbumPhotoPickerScreen(
+                    title = if (targets.size == 1) {
+                        pickerContext.getString(R.string.label_picker_title, targets.single())
+                    } else {
+                        pickerContext.getString(R.string.label_picker_title_many)
+                    },
+                    showUnfiledFilter = false,
+                    excludeKeys = alreadyLabelled,
+                    onBack = { navController.popBackStack() },
+                    onPick = { picked ->
+                        labelsVm.add(picked, targets) { result ->
+                            val message = eu.akoos.photos.presentation.common.labelBulkMessage(result)
+                                .resolve(pickerContext.resources)
+                            android.widget.Toast.makeText(pickerContext, message, android.widget.Toast.LENGTH_SHORT).show()
+                            if (navController.currentDestination?.route == Screen.LabelPhotoPicker.route) {
+                                navController.popBackStack()
+                            }
+                        }
+                    },
+                )
+            }
         }
 
         composable(Screen.LandingTab.route) {
@@ -1568,15 +1750,7 @@ fun NavGraph(
         composable(Screen.PrivacySecuritySettings.route) {
             eu.akoos.photos.presentation.settings.PrivacySecuritySettingsScreen(
                 onBack = { navController.popBackStack() },
-                onOfflinePhotosClick = { navController.navigate(Screen.Offline.route) },
                 onHiddenAlbumClick = { navController.navigate(Screen.HiddenAlbum.route) },
-                onShareMetadataClick = { navController.navigate(Screen.ShareMetadata.route) },
-            )
-        }
-
-        composable(Screen.ShareMetadata.route) {
-            eu.akoos.photos.presentation.settings.ShareMetadataScreen(
-                onBack = { navController.popBackStack() },
             )
         }
 
@@ -1584,7 +1758,7 @@ fun NavGraph(
             val settingsVm: eu.akoos.photos.presentation.settings.SettingsViewModel = hiltViewModel()
             AccountScreen(
                 onBack = { navController.popBackStack() },
-                onSignOut = { settingsVm.signOut() },
+                onSignOut = { vault -> settingsVm.signOut(vault) },
                 viewModel = settingsVm,
             )
         }
@@ -1713,7 +1887,6 @@ fun NavGraph(
                 onOpenCategories = { navController.navigate(Screen.TimelineCategories.route) },
                 onOpenAlbums = { navController.navigate(Screen.TimelineAlbums.route) },
                 onOpenDeviceFolders = { navController.navigate(Screen.TimelineDeviceFolders.route) },
-                onOpenLandingTab = { navController.navigate(Screen.LandingTab.route) },
             )
         }
 
@@ -1731,6 +1904,10 @@ fun NavGraph(
 
         composable(Screen.TimelineDeviceFolders.route) {
             TimelineDeviceFoldersScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Screen.AlbumsSettings.route) {
+            AlbumsSettingsScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Screen.NotificationSettings.route) {
@@ -1778,19 +1955,12 @@ fun NavGraph(
 
         composable(
             Screen.Search.route,
-            // Container-transform feel on open: the search page grows up from the top bar (where the
-            // search affordance sits) and fades in, then shrinks back on the way out, so it reads as the
-            // search field enlarging into the page rather than a plain push. Gentler scale than the globe.
-            enterTransition = {
-                scaleIn(animationSpec = tween(300), initialScale = 0.92f, transformOrigin = TransformOrigin(0.5f, 0.0f)) +
-                    fadeIn(animationSpec = tween(220))
-            },
+            // Search is the dock's third tab, so it comes in from the side over the page that was showing, and
+            // leaves the same way, the Add to album screen's own motion.
+            enterTransition = { slideInHorizontally(animationSpec = tween(300)) { it } },
             exitTransition = { fadeOut(animationSpec = tween(160)) },
             popEnterTransition = { fadeIn(animationSpec = tween(200)) },
-            popExitTransition = {
-                scaleOut(animationSpec = tween(260), targetScale = 0.92f, transformOrigin = TransformOrigin(0.5f, 0.0f)) +
-                    fadeOut(animationSpec = tween(200))
-            },
+            popExitTransition = { slideOutHorizontally(animationSpec = tween(260)) { it } },
         ) {
             SearchScreen(
                 onBack = { navController.popBackStack() },
@@ -1802,21 +1972,6 @@ fun NavGraph(
                     viewerTrashMode = false
                     navController.navigate(Screen.Viewer.route)
                 },
-                onOpenMap = {
-                    if (!mapStylePrompted) {
-                        showMapStyleChooser = true
-                    } else {
-                        navController.navigate(if (mapStyleOsm) Screen.Map.route else Screen.CustomMap.route)
-                    }
-                },
-                onOpenCalendar = {
-                    navController.navigate(Screen.Calendar.route) {
-                        popUpTo(Screen.Search.route) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                },
-                onOpenOffline = { navController.navigate(Screen.Offline.route) },
-                onOpenPeople = { navController.navigate(Screen.People.route) },
                 onEditMetadata = { selection ->
                     // Search runs over the user's own library, never an album someone shared with
                     // them, so the editor's own per-item rules decide what is writable.
@@ -1824,27 +1979,67 @@ fun NavGraph(
                     navController.navigate(Screen.MetadataEditor.route)
                 },
                 onOpenPerson = { personId -> navController.navigate(Screen.PersonDetail.create(personId)) },
-            )
-        }
-
-        composable(
-            Screen.Map.route,
-            // A live osmdroid MapView jumps its tiles when scaled, so the classic map fades in flat.
-            enterTransition = { fadeIn(animationSpec = tween(240)) },
-            exitTransition = { fadeOut(animationSpec = tween(180)) },
-        ) {
-            MapScreen(
-                onBack = { navController.popBackStack() },
-                onOpenPlace = { lat, lon -> navController.navigate(Screen.PlaceCity.create(lat, lon)) },
-                onSwitchStyle = {
-                    mapStyleSwitchFrom = Screen.Map.route
-                    showMapStyleChooser = true
+                onOpenAlbum = { album ->
+                    selectedAlbum = album
+                    albumOpenedToShare = false
+                    albumOpenAction = null
+                    navController.navigate(Screen.AlbumDetail.route)
+                },
+                onOpenDeviceFolder = { bucketName ->
+                    selectedDeviceFolder = bucketName
+                    deviceFolderOpenAction = null
+                    deviceFolderFromVault = false
+                    navController.navigate(Screen.DeviceFolderDetail.route)
+                },
+                // The pages the Albums tab's shortcut tiles lead to, by the same routes.
+                onOpenDestination = { tile ->
+                    when (tile) {
+                        LibraryTile.Collection -> navController.navigate(Screen.Memories.route)
+                        LibraryTile.Hidden -> navController.navigate(Screen.HiddenAlbum.route)
+                        LibraryTile.Shared -> navController.navigate(Screen.Shared.route)
+                        LibraryTile.Map ->
+                            if (!mapStylePrompted) showMapStyleChooser = true
+                            else navController.navigate(if (mapStyleOsm) Screen.Map.route else Screen.CustomMap.route)
+                        LibraryTile.Calendar -> navController.navigate(Screen.Calendar.route)
+                        LibraryTile.People -> navController.navigate(Screen.People.route)
+                        LibraryTile.Offline -> navController.navigate(Screen.Offline.route)
+                    }
                 },
             )
         }
 
         composable(
-            Screen.CustomMap.route,
+            Screen.Map.PATTERN,
+            arguments = listOf(
+                navArgument(MAP_FOCUS_LAT_ARG) { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument(MAP_FOCUS_LON_ARG) { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
+            // A live osmdroid MapView jumps its tiles when scaled, so the classic map fades in flat.
+            enterTransition = { fadeIn(animationSpec = tween(240)) },
+            exitTransition = { fadeOut(animationSpec = tween(180)) },
+        ) { backStackEntry ->
+            val focus = parseMapFocus(
+                backStackEntry.arguments?.getString(MAP_FOCUS_LAT_ARG),
+                backStackEntry.arguments?.getString(MAP_FOCUS_LON_ARG),
+            )
+            MapScreen(
+                onBack = { navController.popBackStack() },
+                onOpenPlace = { lat, lon -> navController.navigate(Screen.PlaceCity.create(lat, lon)) },
+                onSwitchStyle = {
+                    mapStyleSwitchFrom = Screen.Map.PATTERN
+                    mapStyleFocus = focus
+                    showMapStyleChooser = true
+                },
+                focus = focus,
+            )
+        }
+
+        composable(
+            Screen.CustomMap.PATTERN,
+            arguments = listOf(
+                navArgument(MAP_FOCUS_LAT_ARG) { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument(MAP_FOCUS_LON_ARG) { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
             // Container-transform feel: opening the globe from the Search map card grows the screen up
             // from roughly the card's spot, and backing out shrinks it back there, so the card reads as
             // enlarging into the globe rather than a plain page push.
@@ -1858,15 +2053,21 @@ fun NavGraph(
                 scaleOut(animationSpec = tween(300), targetScale = 0.80f, transformOrigin = TransformOrigin(0.5f, 0.28f)) +
                     fadeOut(animationSpec = tween(240))
             },
-        ) {
+        ) { backStackEntry ->
+            val focus = parseMapFocus(
+                backStackEntry.arguments?.getString(MAP_FOCUS_LAT_ARG),
+                backStackEntry.arguments?.getString(MAP_FOCUS_LON_ARG),
+            )
             CustomMapScreen(
                 onBack = { navController.popBackStack() },
                 onCountryClick = { code -> navController.navigate(Screen.PlaceCountry.create(code)) },
                 onCityClick = { lat, lon -> navController.navigate(Screen.PlaceCity.create(lat, lon)) },
                 onSwitchStyle = {
-                    mapStyleSwitchFrom = Screen.CustomMap.route
+                    mapStyleSwitchFrom = Screen.CustomMap.PATTERN
+                    mapStyleFocus = focus
                     showMapStyleChooser = true
                 },
+                focus = focus,
             )
         }
 
@@ -1926,7 +2127,7 @@ fun NavGraph(
         // First-run map-style chooser, raised by either map entry point before the style has ever
         // been picked and then never again. A choice mirrors into the Settings map-style toggle and
         // opens that map; a dismiss keeps the globe default. Both mark the prompt answered so it stays
-        // a one-time ask.
+        // a one-time ask. A map opened on one place keeps that place through the choice.
         if (showMapStyleChooser) {
             MapStyleChooserDialog(
                 onChoose = { classic ->
@@ -1937,15 +2138,23 @@ fun NavGraph(
                             it[SettingsKeys.MAP_STYLE_PROMPTED] = true
                         }
                     }
-                    val target = if (classic) Screen.Map.route else Screen.CustomMap.route
+                    // The switch pops by the registered pattern, which names the map destination exactly
+                    // whatever focus its entry carries, rather than leaning on a plain route resolving
+                    // through the optional query arguments.
+                    val target = if (classic) Screen.Map.PATTERN else Screen.CustomMap.PATTERN
+                    val targetRoute = mapFocusRoute(
+                        if (classic) Screen.Map.route else Screen.CustomMap.route,
+                        mapStyleFocus,
+                    )
                     val from = mapStyleSwitchFrom
                     mapStyleSwitchFrom = null
+                    mapStyleFocus = null
                     when {
                         // First-run prompt, raised before any map is open: open the chosen map.
-                        from == null -> navController.navigate(target)
+                        from == null -> navController.navigate(targetRoute)
                         // Switched to the OTHER style while on a map: replace that map so the two never
                         // stack, and backing out leaves the screen behind the map rather than the old style.
-                        from != target -> navController.navigate(target) {
+                        from != target -> navController.navigate(targetRoute) {
                             popUpTo(from) { inclusive = true }
                             launchSingleTop = true
                         }
@@ -1959,13 +2168,15 @@ fun NavGraph(
                     // way neither apply a style nor navigate anywhere.
                     showMapStyleChooser = false
                     mapStyleSwitchFrom = null
+                    mapStyleFocus = null
                 },
             )
         }
 
         // One-time 2.5.0 thank-you popup, rendered at the nav root so it sits over whatever route is on
-        // top (the gallery on update, or the About screen for the owner's hidden preview).
-        if (thanksVisible) {
+        // top (the gallery on update, or the About screen for the owner's hidden preview). Held back
+        // while the app lock shows, since its window would open above the lock's.
+        if (thanksVisible && !appLock.isLocked) {
             ThankYouDialog(
                 onDismiss = {
                     // Dismissing the thank-you opens What's New next when it is still pending (the

@@ -69,6 +69,11 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import eu.akoos.photos.presentation.settings.HiddenSettingsSheet
+import eu.akoos.photos.presentation.settings.VaultPasswordFlow
+import eu.akoos.photos.presentation.settings.VaultPasswordStep
+import eu.akoos.photos.presentation.settings.VaultPasswordViewModel
+import androidx.compose.material.icons.filled.Settings
 import eu.akoos.photos.R
 import eu.akoos.photos.presentation.common.CloudPhotoCell
 import eu.akoos.photos.presentation.common.ConfirmSheet
@@ -81,6 +86,8 @@ import eu.akoos.photos.presentation.common.SelectionCheckPop
 import eu.akoos.photos.presentation.common.SelectionDrawer
 import eu.akoos.photos.presentation.common.floatingHeaderContentTopPadding
 import eu.akoos.photos.presentation.common.selectPressScale
+import eu.akoos.photos.presentation.common.selectionDrawerRestingHeight
+import eu.akoos.photos.presentation.gallery.gridBottomPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -100,6 +107,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import eu.akoos.photos.presentation.util.findFragmentActivity
+import eu.akoos.photos.presentation.lock.LocalAppLock
+import eu.akoos.photos.presentation.lock.runWhenOpen
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -138,6 +147,10 @@ fun HiddenAlbumScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showHiddenSettings by remember { mutableStateOf(false) }
+    var vaultPasswordStep by remember { mutableStateOf(VaultPasswordStep.None) }
+    val vaultPasswordViewModel: VaultPasswordViewModel = hiltViewModel()
+    val vaultPasswordSet by vaultPasswordViewModel.isSet.collectAsStateWithLifecycle()
 
     SecureScreenEffect()
 
@@ -186,7 +199,10 @@ fun HiddenAlbumScreen(
 
     // Keyed on the authenticated flag so that when the screen re-locks on returning from
     // the background (ON_STOP cleared it), the prompt fires again automatically instead of
-    // leaving the user on a static lock screen.
+    // leaving the user on a static lock screen. A return that brings up the app lock asks
+    // for that one first: this prompt would open above the lock and race its own, so it
+    // waits for the unlock.
+    val appLock = LocalAppLock.current
     LaunchedEffect(state.isAuthenticated) {
         if (!state.isAuthenticated && !promptShown) {
             // LocaleOverride wraps LocalContext in a ContextWrapper, so a direct cast
@@ -197,12 +213,14 @@ fun HiddenAlbumScreen(
                 onBack()
                 return@LaunchedEffect
             }
-            promptShown = true
-            showBiometricPrompt(
-                activity = fragmentActivity,
-                onSuccess = { viewModel.onAuthenticationSuccess() },
-                onError = { onBack() },
-            )
+            appLock.runWhenOpen {
+                promptShown = true
+                showBiometricPrompt(
+                    activity = fragmentActivity,
+                    onSuccess = { viewModel.onAuthenticationSuccess() },
+                    onError = { onBack() },
+                )
+            }
         }
     }
 
@@ -283,6 +301,12 @@ fun HiddenAlbumScreen(
             // clears the header.
             val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
             val contentTopPad = floatingHeaderContentTopPadding()
+            // The vault's drawer slots no action, so it rests without the button row.
+            val gridBottomPad = gridBottomPadding(
+                base = 100.dp + navBottom,
+                selecting = state.isSelectionMode,
+                drawerHeight = selectionDrawerRestingHeight(withPrimaryRow = false),
+            )
             val cols = eu.akoos.photos.presentation.gallery.rememberDefaultGridColumns()
             val seamless = eu.akoos.photos.presentation.gallery.rememberSeamlessGrid()
             // Held above the branch so the selection drawer can watch the same scroll the photo
@@ -297,7 +321,7 @@ fun HiddenAlbumScreen(
                         start = if (seamless) 0.dp else 8.dp,
                         top = contentTopPad,
                         end = if (seamless) 0.dp else 8.dp,
-                        bottom = 100.dp + navBottom,
+                        bottom = gridBottomPad,
                     ),
                     horizontalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 4.dp),
                     verticalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 4.dp),
@@ -404,7 +428,7 @@ fun HiddenAlbumScreen(
                             start = if (seamless) 0.dp else 8.dp,
                             top = contentTopPad,
                             end = if (seamless) 0.dp else 8.dp,
-                            bottom = 100.dp + navBottom,
+                            bottom = gridBottomPad,
                         ),
                         horizontalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 4.dp),
                         verticalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 4.dp),
@@ -593,8 +617,30 @@ fun HiddenAlbumScreen(
                 FloatingHeader(
                     title = stringResource(R.string.hidden_photos_title),
                     onBack = onBack,
+                    trailing = {
+                        IconBubble(
+                            icon = Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.settings_title),
+                            onClick = { showHiddenSettings = true },
+                        )
+                    },
                 )
             }
+            if (showHiddenSettings) {
+                HiddenSettingsSheet(
+                    passwordSet = vaultPasswordSet,
+                    onOpenPassword = {
+                        showHiddenSettings = false
+                        vaultPasswordStep = if (vaultPasswordSet) VaultPasswordStep.Choose else VaultPasswordStep.Set
+                    },
+                    onDismiss = { showHiddenSettings = false },
+                )
+            }
+            VaultPasswordFlow(
+                step = vaultPasswordStep,
+                onStep = { vaultPasswordStep = it },
+                viewModel = vaultPasswordViewModel,
+            )
 
             // The strip carries exactly what the grid holds selected, in the order the grid lists
             // it: the hidden cloud photos first, then the vaulted device ones, so a sweep across

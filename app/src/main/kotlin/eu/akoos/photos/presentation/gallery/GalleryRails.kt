@@ -25,6 +25,7 @@ package eu.akoos.photos.presentation.gallery
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.datastore.preferences.core.edit
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import eu.akoos.photos.data.preferences.SettingsKeys
@@ -49,6 +50,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,10 +77,12 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -89,8 +93,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -109,6 +125,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -123,6 +142,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -174,7 +194,6 @@ internal val LocalPeopleRail = compositionLocalOf { PeopleRailData() }
 
 @Composable
 internal fun AlbumsFilterRail(
-    onHiddenAlbumClick: () -> Unit = {},
     onNewAlbumClick: () -> Unit = {},
     /** Logged-out only: create a real device folder from picked local photos (Android 10+). */
     onNewLocalFolder: () -> Unit = {},
@@ -182,115 +201,24 @@ internal fun AlbumsFilterRail(
     onFilterSelected: (AlbumDisplayFilter) -> Unit = {},
     onOpenSheet: () -> Unit = {},
     isSignedIn: Boolean = true,
-    /** Albums-tab inline search, hoisted in the gallery and threaded through the header. */
-    searchQuery: String = "",
-    onSearchQueryChange: (String) -> Unit = {},
-    searchActive: Boolean = false,
-    onSearchActiveChange: (Boolean) -> Unit = {},
-    /** True while the page arranges albums; hides the search entry so the two never share the rail. */
-    reorderActive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    // Focus the field only as the bar opens, never on a plain tab visit.
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(searchActive) { if (searchActive) focusRequester.requestFocus() }
-    // Back closes the bar and clears the query before it leaves the tab.
-    BackHandler(enabled = searchActive) { onSearchActiveChange(false); onSearchQueryChange("") }
-
-    BoxWithConstraints(modifier = modifier) {
-        // The rail is the weighted half of the header row, so it already stops before the avatar: the
-        // open bar fills the whole rail width, collapsed it is one 38dp icon pinned at the end.
-        val searchWidth by animateDpAsState(
-            targetValue = if (searchActive) maxWidth else 38.dp,
-            animationSpec = tween(220),
-            label = "albumsSearchWidth",
-        )
-        // Filter, Hidden and New pills, taken off the rail while the bar is open so none is pressed by
-        // accident. The avatar beside the rail stays in place throughout.
-        if (!searchActive) {
-            AlbumsRailPills(
-                onHiddenAlbumClick = onHiddenAlbumClick,
-                onNewAlbumClick = onNewAlbumClick,
-                onNewLocalFolder = onNewLocalFolder,
-                selectedFilter = selectedFilter,
-                onFilterSelected = onFilterSelected,
-                onOpenSheet = onOpenSheet,
-                isSignedIn = isSignedIn,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        // Morphing search element: a 38dp icon collapsed, the input bar filling the rail open. Gone
-        // while arranging, which takes the whole rail for its own bar.
-        if (!reorderActive) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .width(searchWidth)
-                    .height(38.dp)
-                    .clip(pillShape)
-                    .background(PillBg, pillShape)
-                    .border(0.5.dp, if (searchQuery.isNotEmpty()) Accent else PillBorder, pillShape)
-                    .clickable(enabled = !searchActive) { onSearchActiveChange(true) },
-            ) {
-                if (searchActive) {
-                    Row(
-                        modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = FgDim, modifier = Modifier.size(18.dp))
-                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                            if (searchQuery.isEmpty()) {
-                                Text(
-                                    stringResource(R.string.albums_search_hint),
-                                    color = FgMute,
-                                    fontSize = 14.sp,
-                                    maxLines = 1,
-                                )
-                            }
-                            BasicTextField(
-                                value = searchQuery,
-                                onValueChange = onSearchQueryChange,
-                                singleLine = true,
-                                textStyle = TextStyle(color = FgPrimary, fontSize = 14.sp),
-                                cursorBrush = SolidColor(Accent),
-                                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                            )
-                        }
-                        // Clears a non-empty query, then closes the bar on the next tap.
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .clickable { if (searchQuery.isNotEmpty()) onSearchQueryChange("") else onSearchActiveChange(false) },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.Close,
-                                contentDescription = stringResource(R.string.cd_clear_search),
-                                tint = FgDim,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
-                } else {
-                    Icon(
-                        Icons.Default.Search,
-                        contentDescription = stringResource(R.string.search_title),
-                        tint = FgDim,
-                        modifier = Modifier.align(Alignment.Center).size(18.dp),
-                    )
-                }
-            }
-        }
-    }
+    // Albums are found through Search, so the rail carries only the view filter and the New pill.
+    AlbumsRailPills(
+        onNewAlbumClick = onNewAlbumClick,
+        onNewLocalFolder = onNewLocalFolder,
+        selectedFilter = selectedFilter,
+        onFilterSelected = onFilterSelected,
+        onOpenSheet = onOpenSheet,
+        isSignedIn = isSignedIn,
+        modifier = modifier.fillMaxWidth(),
+    )
 }
 
-/** The Albums rail's fixed pills (view filter, Hidden, New), lifted out so the search bar can take
- *  their place while it is open without re-indenting or duplicating them. */
+/** The Albums rail's pills (view filter, New), drawn as the Photos rail's "All" pill is: the same height,
+ *  the same `filterPillBg` surface with no border, and the accent tint when the filter is off its default. */
 @Composable
 private fun AlbumsRailPills(
-    onHiddenAlbumClick: () -> Unit,
     onNewAlbumClick: () -> Unit,
     onNewLocalFolder: () -> Unit,
     selectedFilter: AlbumDisplayFilter,
@@ -305,39 +233,41 @@ private fun AlbumsRailPills(
     val defaultFilterOrdinal by remember {
         context.settingsDataStore.data.map { it[SettingsKeys.ALBUMS_DEFAULT_FILTER] ?: 0 }
     }.collectAsState(initial = 0)
-    val defaultFilter = AlbumDisplayFilter.entries[
-        defaultFilterOrdinal.coerceIn(0, AlbumDisplayFilter.entries.lastIndex)
-    ]
-    val hiddenLabel = stringResource(R.string.gallery_filter_hidden)
+    val defaultFilter = albumDisplayFilterAt(defaultFilterOrdinal)
     val newAlbumLabel = stringResource(R.string.albums_new_album)
     val newFolderLabel = stringResource(R.string.new_folder)
     LazyRow(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        // Room at the end so a pill never slides under the collapsed search icon.
-        contentPadding = PaddingValues(end = 46.dp),
     ) {
-        // All / Cloud / Local view filter. Tapping the label cycles All to Cloud to Local; the
-        // filter icon after the separator opens the sheet (default + remember-last). Highlighted
-        // when off the configured default, so a filter sitting at its default reads as unfiltered.
+        // All / Cloud / Local / Excluded view filter. Tapping the label cycles through them in that
+        // order; the filter icon after the separator opens the sheet (view, sort, more settings).
+        // Highlighted when off the configured default, so a filter sitting at its default reads as
+        // unfiltered.
         item(key = "album_filter") {
             val active = selectedFilter != defaultFilter
             val label = when (selectedFilter) {
                 AlbumDisplayFilter.All -> stringResource(R.string.albums_filter_all)
                 AlbumDisplayFilter.Cloud -> stringResource(R.string.albums_filter_cloud)
                 AlbumDisplayFilter.Local -> stringResource(R.string.albums_filter_local)
+                AlbumDisplayFilter.Excluded -> stringResource(R.string.albums_filter_excluded)
             }
+            val activeAmount by rememberPillActiveAmount(active)
+            val idleBackground = AppColors.current.filterPillBg
+            val activeBackground = Accent.copy(alpha = 0.18f)
+            val idleDivider = PillBorder
+            val activeDivider = Accent.copy(alpha = 0.4f)
+            val primary = FgPrimary
+            val accent = Accent
             Row(
                 modifier = Modifier
-                    .height(38.dp)
-                    .background(if (active) AppColors.current.chipSelectedBg else PillBg, pillShape)
-                    .border(0.5.dp, if (active) Accent else PillBorder, pillShape)
+                    .tintedPill(idleBackground, activeBackground) { activeAmount }
                     .padding(start = 14.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 // Label part cycles to the next narrowing on tap.
-                Row(
+                Box(
                     modifier = Modifier
                         .clickable {
                             val next = AlbumDisplayFilter.entries[
@@ -346,46 +276,22 @@ private fun AlbumsRailPills(
                             onFilterSelected(next)
                         }
                         .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    Text(label, color = if (active) FgPrimary else FgDim, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    PillLabel(label, color = { lerp(primary, accent, activeAmount) })
                 }
                 // Hairline separator + filter button, mirroring the timeline All pill. Opens the
-                // sheet where the default filter and the remember-last toggle are set.
+                // sheet for the view and the sort, and from it the Albums settings page.
                 Box(
                     modifier = Modifier
                         .height(18.dp)
                         .width(0.5.dp)
-                        .background(if (active) Accent.copy(alpha = 0.4f) else PillBorder),
+                        .drawBehind { drawRect(lerp(idleDivider, activeDivider, activeAmount)) },
                 )
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { onOpenSheet() }
-                        .padding(6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.FilterList,
-                        stringResource(R.string.albums_filter_sheet_title),
-                        tint = if (active) Accent else FgDim,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-        // Hidden albums: compact icon button, matching the other icon pills.
-        item(key = "hidden") {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .background(PillBg, pillShape)
-                    .border(0.5.dp, PillBorder, pillShape)
-                    .clickable { onHiddenAlbumClick() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.Lock, hiddenLabel, tint = FgDim, modifier = Modifier.size(15.dp))
+                FilterPillButton(
+                    activeAmount = { activeAmount },
+                    description = stringResource(R.string.albums_filter_sheet_title),
+                    onClick = onOpenSheet,
+                )
             }
         }
         // New album: compact icon button that opens the create-album dialog. A local-only session
@@ -395,8 +301,7 @@ private fun AlbumsRailPills(
                 Box(
                     modifier = Modifier
                         .size(38.dp)
-                        .background(PillBg, pillShape)
-                        .border(0.5.dp, PillBorder, pillShape)
+                        .background(AppColors.current.filterPillBg, pillShape)
                         .clickable { onNewAlbumClick() },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -412,8 +317,7 @@ private fun AlbumsRailPills(
                 Box(
                     modifier = Modifier
                         .size(38.dp)
-                        .background(PillBg, pillShape)
-                        .border(0.5.dp, PillBorder, pillShape)
+                        .background(AppColors.current.filterPillBg, pillShape)
                         .clickable { onNewLocalFolder() },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -670,22 +574,39 @@ internal fun AvatarButton(
 internal fun FilterRail(
     totalCount: Int,
     contentFilter: ContentFilter,
-    onSearchClick: () -> Unit,
+    selectedCategory: GalleryFilter,
     onCalendarClick: () -> Unit,
     onClearContentFilter: () -> Unit,
     onOpenTimelineFilter: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isContentFilterActive = contentFilter != ContentFilter()
+    // The category chips scroll sideways, so a chosen category can sit out of sight; the pill names it
+    // as well, so anything narrowing the timeline is visible here.
+    val isContentFilterActive = contentFilter != ContentFilter() || selectedCategory != GalleryFilter.All
+    val categoryName = if (selectedCategory == GalleryFilter.All) null else categoryLabel(selectedCategory)
     val photosLabel = stringResource(R.string.gallery_filter_photos)
     val videosLabel = stringResource(R.string.filter_type_videos)
     val localLabel = stringResource(R.string.filter_sync_local)
     val backedUpLabel = stringResource(R.string.filter_sync_backedup)
     val cloudLabel = stringResource(R.string.filter_sync_cloud)
+    val offlineLabel = stringResource(R.string.filter_offline)
     val allLabel = stringResource(R.string.gallery_filter_all)
-    val filterSummary = remember(contentFilter, photosLabel, videosLabel, localLabel, backedUpLabel, cloudLabel) {
-        buildContentFilterSummary(contentFilter, photosLabel, videosLabel, localLabel, backedUpLabel, cloudLabel)
+    val contentSummary = remember(contentFilter, photosLabel, videosLabel, localLabel, backedUpLabel, cloudLabel, offlineLabel) {
+        buildContentFilterSummary(contentFilter, photosLabel, videosLabel, localLabel, backedUpLabel, cloudLabel, offlineLabel)
     }
+    val filterSummary = listOfNotNull(categoryName, contentSummary).joinToString(" · ").ifEmpty { null }
+
+    // One value carries every tint of the pill, so the whole change is a single eased step that is drawn,
+    // not recomposed. The label cross-fades into the next one in place and the pill's width follows with
+    // one spring, so nothing disappears and nothing moves on a curve of its own.
+    val activeAmount by rememberPillActiveAmount(isContentFilterActive)
+    val idleBackground = AppColors.current.filterPillBg
+    val activeBackground = Accent.copy(alpha = 0.18f)
+    val idleDivider = PillBorder
+    val activeDivider = Accent.copy(alpha = 0.4f)
+    val accent = Accent
+    val primary = FgPrimary
+    val pillContent = PillContent(isContentFilterActive, filterSummary ?: allLabel)
 
     LazyRow(
         modifier = modifier,
@@ -696,40 +617,54 @@ internal fun FilterRail(
         item(key = "all") {
             Row(
                 modifier = Modifier
-                    .height(38.dp)
-                    .background(
-                        if (isContentFilterActive) Accent.copy(alpha = 0.18f) else AppColors.current.filterPillBg,
-                        pillShape
-                    )
+                    .tintedPill(idleBackground, activeBackground) { activeAmount }
                     .padding(start = 14.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 // Summary + count. Tap opens the timeline filter drawer (same as the funnel), or
                 // clears the filter when one is active so the pill keeps its quick-clear shortcut.
-                Row(
+                Box(
                     modifier = Modifier
                         .clickable { if (isContentFilterActive) onClearContentFilter() else onOpenTimelineFilter() }
                         .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (!isContentFilterActive) {
-                        Icon(Icons.Default.Check, null, tint = FgPrimary, modifier = Modifier.size(12.dp))
-                    }
-                    Text(
-                        filterSummary ?: allLabel,
-                        color = if (isContentFilterActive) Accent else FgPrimary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    if (totalCount > 0) {
-                        Text(
-                            formatCount(totalCount),
-                            color = if (isContentFilterActive) Accent.copy(alpha = 0.7f) else FgDim,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
+                    // The marks around the label differ between idle and active, so those two swap as a
+                    // whole; a change of label inside one state is the label's own cross-fade.
+                    AnimatedContent(
+                        targetState = pillContent,
+                        contentKey = { it.active },
+                        transitionSpec = {
+                            fadeIn(tween(PILL_FADE_MS)) togetherWith fadeOut(tween(PILL_FADE_MS)) using
+                                SizeTransform(clip = false) { _, _ -> snap() }
+                        },
+                        contentAlignment = Alignment.CenterStart,
+                        label = "filterPillState",
+                    ) { content ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (!content.active) {
+                                Icon(
+                                    Icons.Default.Check, null, tint = FgPrimary,
+                                    modifier = Modifier.padding(end = 6.dp).size(12.dp),
+                                )
+                            }
+                            PillLabel(content.label, color = { if (content.active) accent else primary })
+                            if (totalCount > 0) {
+                                Text(
+                                    formatCount(totalCount),
+                                    color = if (content.active) Accent.copy(alpha = 0.7f) else FgDim,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(start = 6.dp),
+                                )
+                            }
+                            if (content.active) {
+                                Icon(
+                                    Icons.Default.Close, stringResource(R.string.filter_reset), tint = Accent,
+                                    modifier = Modifier.padding(start = 6.dp).size(14.dp),
+                                )
+                            }
+                        }
                     }
                 }
                 // Hairline separator + filter button. Opens the content-filter drawer (sync status
@@ -739,40 +674,80 @@ internal fun FilterRail(
                     modifier = Modifier
                         .height(18.dp)
                         .width(0.5.dp)
-                        .background(if (isContentFilterActive) Accent.copy(alpha = 0.4f) else PillBorder),
+                        .drawBehind { drawRect(lerp(idleDivider, activeDivider, activeAmount)) },
                 )
-                Box(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { onOpenTimelineFilter() }
-                        .padding(6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.FilterList,
-                        stringResource(R.string.settings_timeline_filter),
-                        tint = if (isContentFilterActive) Accent else FgDim,
-                        modifier = Modifier.size(16.dp),
-                    )
+                FilterPillButton(
+                    activeAmount = { activeAmount },
+                    description = stringResource(R.string.settings_timeline_filter),
+                    onClick = onOpenTimelineFilter,
+                )
+            }
+        }
+
+
+    }
+}
+
+/** What the Photos filter pill shows: whether a filter is active and the label it names. */
+private data class PillContent(val active: Boolean, val label: String)
+
+private const val PILL_TINT_MS = 240
+private const val PILL_FADE_MS = 200
+
+/** The 0..1 amount a filter pill is tinted by, easing between idle and active as one step. */
+@Composable
+private fun rememberPillActiveAmount(active: Boolean): State<Float> =
+    animateFloatAsState(
+        if (active) 1f else 0f,
+        tween(PILL_TINT_MS, easing = FastOutSlowInEasing),
+        label = "pillActive",
+    )
+
+/** The surface of a filter pill: its width follows its content with one spring, and its tint is drawn
+ *  from [amount] (0 idle, 1 active) rather than recomposed. */
+private fun Modifier.tintedPill(idle: Color, active: Color, amount: () -> Float): Modifier = this
+    .animateContentSize(spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow))
+    .height(38.dp)
+    .drawBehind {
+        drawOutline(pillShape.createOutline(size, layoutDirection, this), lerp(idle, active, amount()))
+    }
+
+/** A pill's label. A new [text] fades in over the old one, which fades out as it does, in the same spot,
+ *  while the label's width eases to the new text's, so the words never vanish between two states. */
+@Composable
+private fun PillLabel(text: String, color: () -> Color) {
+    AnimatedContent(
+        targetState = text,
+        transitionSpec = {
+            fadeIn(tween(PILL_FADE_MS)) togetherWith fadeOut(tween(PILL_FADE_MS)) using
+                SizeTransform(clip = false) { _, _ ->
+                    spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)
                 }
-            }
-        }
+        },
+        contentAlignment = Alignment.CenterStart,
+        label = "pillLabel",
+    ) { label ->
+        Text(label, color = color(), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+    }
+}
 
-        // ── Search button ─────────────────────────────────────────────────────
-        item(key = "search_button") {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .background(PillBg, pillShape)
-                    .border(0.5.dp, PillBorder, pillShape)
-                    .clickable { onSearchClick() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.Search, stringResource(R.string.search_title),
-                    tint = FgDim, modifier = Modifier.size(18.dp))
-            }
-        }
-
+/** The filter button at the end of a pill. Its tint follows [activeAmount] and is read here, in a
+ *  composable of its own, so a frame of the change redraws this icon alone. */
+@Composable
+private fun FilterPillButton(activeAmount: () -> Float, description: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Default.FilterList,
+            description,
+            tint = lerp(FgDim, Accent, activeAmount()),
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -796,20 +771,29 @@ private fun resolveCategoryOrder(savedCsv: String?): List<GalleryFilter> {
     return saved + DEFAULT_CATEGORY_ORDER.filterNot { it in saved }
 }
 
-@Composable
-private fun categoryLabel(filter: GalleryFilter): String = when (filter) {
-    GalleryFilter.Favorites   -> stringResource(R.string.gallery_filter_favorites)
-    GalleryFilter.Screenshots -> stringResource(R.string.gallery_filter_screenshots)
-    GalleryFilter.Videos      -> stringResource(R.string.filter_type_videos)
-    GalleryFilter.LivePhotos  -> stringResource(R.string.gallery_filter_live_photos)
-    GalleryFilter.Selfies     -> stringResource(R.string.gallery_filter_selfies)
-    GalleryFilter.Portraits   -> stringResource(R.string.gallery_filter_portraits)
-    GalleryFilter.Bursts      -> stringResource(R.string.gallery_filter_bursts)
-    GalleryFilter.Panoramas   -> stringResource(R.string.gallery_filter_panoramas)
-    GalleryFilter.Raw         -> stringResource(R.string.gallery_filter_raw)
-    GalleryFilter.Offline     -> stringResource(R.string.filter_offline)
-    else -> filter.name
+/** The chips the category rail shows, in its order: the saved arrangement minus the hidden ones. */
+internal fun visibleCategories(savedCsv: String?, hidden: Set<String>): List<GalleryFilter> =
+    resolveCategoryOrder(savedCsv).filterNot { it.name in hidden }
+
+/** The string a category is named by, or null for [GalleryFilter.All]. */
+internal fun categoryLabelRes(filter: GalleryFilter): Int? = when (filter) {
+    GalleryFilter.Favorites    -> R.string.gallery_filter_favorites
+    GalleryFilter.Screenshots  -> R.string.gallery_filter_screenshots
+    GalleryFilter.Videos       -> R.string.filter_type_videos
+    GalleryFilter.LivePhotos   -> R.string.gallery_filter_live_photos
+    GalleryFilter.MotionPhotos -> R.string.gallery_filter_motion_photos
+    GalleryFilter.Selfies      -> R.string.gallery_filter_selfies
+    GalleryFilter.Portraits    -> R.string.gallery_filter_portraits
+    GalleryFilter.Bursts       -> R.string.gallery_filter_bursts
+    GalleryFilter.Panoramas    -> R.string.gallery_filter_panoramas
+    GalleryFilter.Raw          -> R.string.gallery_filter_raw
+    GalleryFilter.Offline      -> R.string.filter_offline
+    GalleryFilter.All          -> null
 }
+
+@Composable
+internal fun categoryLabel(filter: GalleryFilter): String =
+    categoryLabelRes(filter)?.let { stringResource(it) } ?: filter.name
 
 /**
  * Horizontally scrollable row of category chips under the timeline's top rail (Favorites,
@@ -834,9 +818,7 @@ internal fun CategoryRail(
     val hidden by remember {
         context.settingsDataStore.data.map { it[SettingsKeys.CATEGORY_RAIL_HIDDEN] ?: emptySet() }
     }.collectAsState(initial = emptySet())
-    val order = remember(savedCsv, hidden) {
-        resolveCategoryOrder(savedCsv).filterNot { it.name in hidden }
-    }
+    val order = remember(savedCsv, hidden) { visibleCategories(savedCsv, hidden) }
 
     // A category hidden while it was the active filter would leave the timeline filtered with no
     // chip left to clear it, so fall back to All.
@@ -846,8 +828,22 @@ internal fun CategoryRail(
         }
     }
 
+    // A chip selected from outside the rail (a category name typed into Search) may sit off screen,
+    // so bring it into view; a chip already fully shown stays where it is.
+    val listState = rememberLazyListState()
+    LaunchedEffect(selectedFilter, order) {
+        val index = order.indexOf(selectedFilter)
+        if (index < 0) return@LaunchedEffect
+        val info = snapshotFlow { listState.layoutInfo }.first { it.totalItemsCount > 0 }
+        val shown = info.visibleItemsInfo.firstOrNull { it.index == index }
+        val fullyShown = shown != null &&
+            shown.offset >= info.viewportStartOffset && shown.offset + shown.size <= info.viewportEndOffset
+        if (!fullyShown) listState.animateScrollToItem(index)
+    }
+
     Column(modifier = modifier) {
         LazyRow(
+            state = listState,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(horizontal = 20.dp),
         ) {
@@ -1292,44 +1288,124 @@ internal fun CategoryReorderList(modifier: Modifier = Modifier) {
 // ── Bottom dock ───────────────────────────────────────────────────────────────
 
 @Composable
-internal fun BottomDock(position: Float, onTabSelected: (Int) -> Unit, showShared: Boolean = true) {
+internal fun BottomDock(
+    position: Float,
+    onTabSelected: (Int) -> Unit,
+    // False for a picker that has no search to offer: the pill then holds Photos and Albums alone.
+    searchTab: Boolean = true,
+) {
     val density = LocalDensity.current
     // Each tab's measured left offset + size (labels differ in width), so the single highlight can slide
     // to the selected one instead of the fill just snapping between tabs.
     val tabX = remember { mutableStateListOf(0f, 0f, 0f) }
     val tabW = remember { mutableStateListOf(0f, 0f, 0f) }
+    val lastTab = if (searchTab) 2 else 1
     var tabH by remember { mutableFloatStateOf(0f) }
-    val selectedTab = position.roundToInt().coerceIn(0, 2)
+    val selectedTab = position.roundToInt().coerceIn(0, lastTab)
     // Drive the highlight off the pager's LIVE fractional position, interpolating between the two tabs it
     // sits over, so it tracks a swiping finger the whole way (and a tap, which the pager animates) rather
     // than only sliding once the page has settled.
-    val lower = position.toInt().coerceIn(0, 2)
-    val upper = (lower + 1).coerceAtMost(2)
+    val lower = position.toInt().coerceIn(0, lastTab)
+    val upper = (lower + 1).coerceAtMost(lastTab)
     val frac = (position - lower).coerceIn(0f, 1f)
     val hlX = lerp(tabX[lower], tabX[upper], frac)
     val hlW = lerp(tabW[lower], tabW[upper], frac)
-    Box(
-        modifier = Modifier
-            .background(PillBgOpaque, pillShape)
-            .border(0.5.dp, PillBorder, pillShape)
-            .padding(4.dp),
-    ) {
-        // The sliding fill, drawn behind the tab row and animated to the active tab's bounds.
-        if (hlW > 0f && tabH > 0f) {
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset(hlX.roundToInt(), 0) }
-                    .size(width = with(density) { hlW.toDp() }, height = with(density) { tabH.toDp() })
-                    .background(Accent.copy(alpha = 0.18f), RoundedCornerShape(999.dp)),
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+            modifier = Modifier
+                .background(PillBgOpaque, pillShape)
+                .border(0.5.dp, PillBorder, pillShape)
+                .padding(4.dp),
+        ) {
+            // The sliding fill, drawn behind the tab row and animated to the active tab's bounds.
+            if (hlW > 0f && tabH > 0f) {
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(hlX.roundToInt(), 0) }
+                        .size(width = with(density) { hlW.toDp() }, height = with(density) { tabH.toDp() })
+                        .background(Accent.copy(alpha = 0.18f), RoundedCornerShape(999.dp)),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             DockTab(Icons.Default.Photo, stringResource(R.string.gallery_tab_photos), selectedTab == 0, { onTabSelected(0) }) { x, w, h -> tabX[0] = x; tabW[0] = w; tabH = h }
             DockTab(Icons.Default.Collections, stringResource(R.string.gallery_tab_albums), selectedTab == 1, { onTabSelected(1) }) { x, w, h -> tabX[1] = x; tabW[1] = w; tabH = h }
-            // Cloud-only: a local-only session omits the Shared tab, leaving a two-tab control.
-            if (showShared) {
-                DockTab(Icons.Default.Share, stringResource(R.string.gallery_tab_shared), selectedTab == 2, { onTabSelected(2) }) { x, w, h -> tabX[2] = x; tabW[2] = w; tabH = h }
+            // Search is the third tab of the pill. The pager has no page for it, so a surface that opens
+            // search as its own screen never lights it; one that has a page for it does.
+            if (searchTab) {
+                DockTab(Icons.Default.Search, stringResource(R.string.search_title), selectedTab == 2, { onTabSelected(2) }) { x, w, h -> tabX[2] = x; tabW[2] = w; tabH = h }
             }
+            }
+        }
+    }
+}
+
+/** The dock's round search button, on its own where a screen has no tab pill beside it. */
+@Composable
+internal fun DockSearchButton(onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 50.dp) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .background(PillBgOpaque, CircleShape)
+            .border(0.5.dp, PillBorder, CircleShape)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Default.Search, stringResource(R.string.search_title), tint = FgDim, modifier = Modifier.size(20.dp))
+    }
+}
+
+/**
+ * The search a screen opens from the dock's search button: a bar that takes the dock's place at the bottom
+ * (the tabs are gone while it is open), above the keyboard. The field takes focus as it appears, the X
+ * clears a typed query and then closes the bar, and Back closes it and clears the query.
+ */
+@Composable
+internal fun DockSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    BackHandler { onQueryChange(""); onClose() }
+    Row(
+        modifier = modifier
+            .height(50.dp)
+            .background(PillBgOpaque, pillShape)
+            .border(0.5.dp, if (query.isNotEmpty()) Accent else PillBorder, pillShape)
+            .padding(start = 16.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Icons.Default.Search, contentDescription = null, tint = FgDim, modifier = Modifier.size(20.dp))
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+            if (query.isEmpty()) {
+                Text(stringResource(R.string.albums_search_hint), color = FgMute, fontSize = 15.sp, maxLines = 1)
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = TextStyle(color = FgPrimary, fontSize = 15.sp),
+                cursorBrush = SolidColor(Accent),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .clickable { if (query.isNotEmpty()) onQueryChange("") else onClose() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = stringResource(R.string.cd_clear_search),
+                tint = FgDim,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }
@@ -1382,77 +1458,8 @@ private fun DockTab(
 enum class SharedFilter { SharedWithMe, SharedByMe }
 
 /** Albums-tab view filter. All shows cloud albums + device folders in one common stream; Cloud
- *  and Local narrow to one kind. Picked from the filter sheet opened by [AlbumsFilterRail]. */
-enum class AlbumDisplayFilter { All, Cloud, Local }
+ *  and Local narrow to one kind. Excluded shows only the albums and folders taken off the grid, each
+ *  with a way back, so it is never a default or a remembered pick. Cycled from the pill on
+ *  [AlbumsFilterRail]. Stored as an ordinal, so the values keep their positions. */
+enum class AlbumDisplayFilter { All, Cloud, Local, Excluded }
 
-@Composable
-internal fun SharedFilterRail(
-    selectedFilter: SharedFilter,
-    onFilterSelected: (SharedFilter) -> Unit,
-    activeEmailFilter: String? = null,
-    onFilterClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    LazyRow(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(end = 8.dp),
-    ) {
-        // Single toggle pill — tap flips between "with me" and "by me". Direction icon
-        // makes the active scope obvious (incoming arrow for with-me, outgoing for by-me).
-        item(key = "shared_toggle") {
-            val isWithMe = selectedFilter == SharedFilter.SharedWithMe
-            Row(
-                modifier = Modifier
-                    .height(38.dp)
-                    .background(AppColors.current.chipSelectedBg, pillShape)
-                    .clickable {
-                        onFilterSelected(
-                            if (isWithMe) SharedFilter.SharedByMe else SharedFilter.SharedWithMe,
-                        )
-                    }
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    if (isWithMe) Icons.AutoMirrored.Filled.CallReceived
-                    else Icons.AutoMirrored.Filled.CallMade,
-                    contentDescription = null,
-                    tint = Accent,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    stringResource(
-                        if (isWithMe) R.string.share_shared_with_me
-                        else R.string.share_shared_by_me,
-                    ),
-                    color = FgPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Icon(
-                    Icons.Default.SwapHoriz,
-                    contentDescription = null,
-                    tint = FgDim,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
-        }
-        // Filter button — highlighted when an email filter is active
-        item(key = "filter_button") {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .background(if (activeEmailFilter != null) Accent.copy(alpha = 0.15f) else PillBg, pillShape)
-                    .border(0.5.dp, if (activeEmailFilter != null) Accent else PillBorder, pillShape)
-                    .clickable { onFilterClick() },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.FilterList, stringResource(R.string.share_filter_account),
-                    tint = if (activeEmailFilter != null) Accent else FgDim,
-                    modifier = Modifier.size(18.dp))
-            }
-        }
-    }
-}

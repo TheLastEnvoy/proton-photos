@@ -102,6 +102,24 @@ enum class VaultedRowFix {
 object HiddenVaultDecisions {
 
     /**
+     * The photo keys a published hide drops the labels of: for each of [vaultUris] the device uri it was hidden
+     * from ([sourceByVaultUri]) and, when it was paired with a Drive photo, that photo's link id. [cloudIdEntries]
+     * are the stored `vaultUri|linkId` pairs. A hidden photo may be labelled under either key, so both go, and a
+     * vault uri with no recorded source or pairing adds nothing.
+     */
+    fun labelKeysOfHidden(
+        vaultUris: Collection<String>,
+        sourceByVaultUri: Map<String, String>,
+        cloudIdEntries: Collection<String>,
+    ): List<String> {
+        val wanted = vaultUris.toHashSet()
+        val cloudIds = cloudIdEntries.mapNotNull { entry ->
+            entry.substringAfter('|', "").takeIf { it.isNotBlank() && entry.substringBefore('|') in wanted }
+        }
+        return (vaultUris.mapNotNull { sourceByVaultUri[it] } + cloudIds).distinct()
+    }
+
+    /**
      * Whether a vault copy is provably the whole photo. [expectedBytes] is what the source states it
      * holds, negative when it states nothing; [copiedBytes] is what the copy reported writing, and
      * [storedBytes] what the vault file holds once the write has reached the disk.
@@ -177,6 +195,18 @@ object HiddenVaultDecisions {
      * the hide wrote.
      */
     fun revealNeedsRowRepair(move: HiddenPairingMove): Boolean = move != HiddenPairingMove.MOVED
+
+    /**
+     * The vault files an involuntary sign-out has to take back to the device, from the files on disk
+     * ([blobUris]) and the uris the vault records a Drive copy for ([pairedUris]).
+     *
+     * A paired file is a device copy of a photo Drive still holds, so losing it costs nothing the
+     * account cannot return. Every other file is the only copy of its photo, the hide having deleted
+     * the original, and a file no record names counts here too: it is the safe direction, the same one
+     * [HiddenVaultLeftovers.vaultedUris] takes for the sign-out warning.
+     */
+    fun deviceOnlyVaultUris(blobUris: Set<String>, pairedUris: Set<String>): List<String> =
+        blobUris.filter { it !in pairedUris }.sorted()
 
     /**
      * The uris a reveal looks its photo's vaulted row up under, in the order they are tried.

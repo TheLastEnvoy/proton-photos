@@ -199,6 +199,8 @@
 
     <!-- Settings -->
     <string name="settings_title">Einstellungen</string>
+    <string name="settings_more_title">Weitere Einstellungen</string>
+    <string name="settings_more_desc">KI, Datenschutz, Benachrichtigungen und Hilfe</string>
     <string name="settings_search_hint">Einstellungen durchsuchen</string>
     <string name="settings_search_no_results">Keine passenden Einstellungen</string>
     <string name="settings_sync_wifi_only">Nur über WLAN synchronisieren</string>
@@ -227,6 +229,35 @@
     <string name="sign_out_dialog_item_vault">Versteckte Fotos</string>
     <string name="sign_out_dialog_confirm">Abmelden</string>
     <string name="sign_out_dialog_cancel">Abbrechen</string>
+    <string name="sign_out_vault_heading">Versteckte Fotos ohne Kopie in Drive</string>
+    <string name="sign_out_vault_move">In die Galerie verschieben</string>
+    <string name="sign_out_vault_move_desc">Sie landen im Ordner %1$s und bleiben auf diesem Telefon.</string>
+    <string name="sign_out_vault_delete">Löschen</string>
+    <string name="sign_out_vault_delete_desc">Es gibt keine weitere Kopie, sie sind endgültig weg.</string>
+    <string name="settings_vault_password">Versteckte Fotos beim Abmelden schützen</string>
+    <string name="settings_vault_password_desc">Aus. Wirst du ohne Vorwarnung abgemeldet, landen versteckte Fotos ohne Kopie in Drive im Ordner %1$s in deiner Galerie. Lege ein Passwort fest, um sie stattdessen in einer geschützten ZIP-Datei zu speichern.</string>
+    <string name="settings_vault_password_on_desc">An. Wirst du ohne Vorwarnung abgemeldet, landen versteckte Fotos ohne Kopie in Drive in einer passwortgeschützten ZIP-Datei.</string>
+    <string name="vault_password_title">Passwort für versteckte Fotos</string>
+    <string name="vault_password_warning">Ist ein Passwort gesetzt und du wirst ohne Vorwarnung abgemeldet, werden versteckte Fotos ohne Kopie in Drive statt in der Galerie in einer passwortgeschützten ZIP-Datei in Downloads gespeichert. Ein verlorenes Passwort lässt sich nicht wiederherstellen.</string>
+    <string name="vault_password_field">Passwort</string>
+    <string name="vault_password_repeat">Passwort wiederholen</string>
+    <string name="vault_password_too_short">Verwende mindestens %1$d Zeichen.</string>
+    <string name="vault_password_mismatch">Die Passwörter stimmen nicht überein.</string>
+    <string name="vault_password_save">Speichern</string>
+    <string name="vault_password_remove">Passwort entfernen</string>
+    <string name="vault_password_change">Passwort ändern</string>
+    <string name="vault_password_current">Aktuelles Passwort</string>
+    <string name="vault_password_wrong">Das ist nicht das aktuelle Passwort.</string>
+    <string name="vault_password_new">Neues Passwort</string>
+    <string name="vault_password_remove_title">Passwort entfernen?</string>
+    <string name="vault_password_remove_body">Es wird nichts gelöscht. Wirst du ohne Vorwarnung abgemeldet, landen versteckte Fotos ohne Kopie in Drive wieder im Ordner %1$s in deiner Galerie. ZIP-Dateien, die schon in Downloads liegen, behalten ihr Passwort.</string>
+    <string name="vault_password_forgot">Passwort vergessen?</string>
+    <string name="vault_password_toast_set">Passwort festgelegt</string>
+    <string name="vault_password_toast_changed">Passwort geändert</string>
+    <string name="vault_password_toast_removed">Passwort entfernt</string>
+    <string name="vault_rescue_zip_text">Deine versteckten Fotos ohne Kopie in Drive wurden in der passwortgeschützten ZIP-Datei %1$s in deinem Ordner Downloads gespeichert, damit keines verloren geht.</string>
+    <string name="sign_out_vault_move_zip">In einer geschützten ZIP-Datei speichern</string>
+    <string name="sign_out_vault_move_zip_desc">Sie landen in einer passwortgeschützten ZIP-Datei im Ordner Downloads und bleiben auf diesem Telefon.</string>
     <string name="settings_account_storage">Drive Speicher</string>
     <string name="settings_account_links">Schnellzugriffe</string>
     <string name="settings_account_link_manage">Konto verwalten</string>
@@ -235,20 +266,16 @@
     <string name="settings_account_link_drive_web_desc">Durchstöbere deine Fotos und Dateien auf drive.proton.me.</string>
     <string name="cancel">Abbrechen</string>
     <string name="settings_language_system">Systemstandard</string>
-    <string name="settings_sync_wifi_desc">Synchronisierung bei Mobilfunk pausieren</string>
     <string name="settings_fullres_wifi_only">Volle Auflösung nur über WLAN</string>
     <string name="settings_fullres_wifi_only_desc">Cloud-Fotos und -Videos in voller Auflösung nur über WLAN laden. Vorschaubilder werden immer geladen.</string>
     <string name="viewer_wifi_for_full_quality">Mit WLAN verbinden für volle Qualität</string>
-    <string name="settings_sync_now_action">Synchronisieren →</string>
     <string name="settings_backup_folders">Sicherungsordner</string>
     <string name="settings_backup_folders_desc">Wähle aus, welche Ordner gesichert werden sollen</string>
     <!-- Sync settings reorganisation (v1.3.2): two grouped sections. -->
     <string name="settings_what_backed_up_section">Was gesichert wird</string>
     <string name="settings_network_section">Netzwerknutzung</string>
     <string name="settings_continuous_backup">Kontinuierliche Sicherung</string>
-    <string name="settings_continuous_backup_desc">Fotos und Videos werden innerhalb von Sekunden nach der Aufnahme hochgeladen.</string>
     <string name="settings_backup_everything">Alles sichern</string>
-    <string name="settings_backup_everything_desc">Jedes Foto und Video auf diesem Gerät automatisch hochladen.</string>
     <!-- Excluded folders feature (paired with backup-everything mode). -->
     <string name="settings_excluded_folders">Ausgeschlossene Ordner</string>
     <string name="settings_excluded_folders_desc_none">Keine Ordner ausgeschlossen</string>
@@ -258,6 +285,7 @@
     <string name="settings_excluded_folders_intro">Fotos in diesen Ordnern werden nicht gesichert, auch wenn „Alles sichern" aktiv ist. Bereits hochgeladene Elemente bleiben auf Drive.</string>
     <string name="settings_excluded_folders_empty">Keine Ordner auf diesem Gerät gefunden</string>
     <string name="settings_excluded_folders_count_label">%1$d von %2$d Ordnern ausgeschlossen</string>
+    <string name="settings_excluded_albums_count_label">%1$d von %2$d Alben ausgeschlossen</string>
     <string name="settings_excluded_folders_select_all">Alle ausschließen</string>
     <string name="settings_excluded_folders_deselect_all">Alle einschließen</string>
     <!-- Album mirror -->
@@ -314,7 +342,6 @@
     <string name="settings_security">Sicherheit</string>
     <string name="settings_security_desc">App-Sperre, Versteckte Fotos</string>
     <string name="settings_strip_metadata_upload">Metadaten beim Upload entfernen</string>
-    <string name="settings_strip_metadata_upload_desc">Entfernt Standort- und Kameradaten aus der hochgeladenen Kopie. Die Kopie auf dem Gerät behält sie, solange die lokale Spiegelung unten nicht aktiv ist. Kamera-, Zeitstempel- und Softwarefelder unter Anpassen hinzufügen.</string>
     <string name="settings_mirror_strip_local">Änderungen auf lokale Dateien spiegeln</string>
     <string name="settings_mirror_strip_local_desc">Entfernt diese Daten auch aus der Kopie auf dem Gerät, damit die gesicherte und die lokale Datei identisch bleiben. Erfordert Zugriff auf alle Dateien und ändert deine Originaldateien.</string>
     <string name="settings_mirror_compress_local">Auch die lokale Datei komprimieren</string>
@@ -325,7 +352,6 @@
     <string name="onboarding_mirror_toggle_desc">Beim Hochladen dieselben Metadaten- und Dateinamensänderungen am Original auf dem Gerät vornehmen, damit die lokale Datei und die hochgeladene Kopie identisch bleiben. Dies ändert deine Originaldateien.</string>
     <string name="onboarding_mirror_grant">Zugriff auf alle Dateien erlauben</string>
     <string name="settings_rename_on_upload">Auf Aufnahmedatum umbenennen beim Upload</string>
-    <string name="settings_rename_on_upload_desc">Benennt die hochgeladene Kopie nach Datum und Uhrzeit der Aufnahme aus den Foto- oder Videometadaten. Dateien auf dem Gerät behalten ihre Namen.</string>
     <string name="settings_strip_gps">GPS-Position entfernen</string>
     <string name="settings_strip_gps_desc">GPS-Koordinaten und Standortdaten entfernen</string>
     <string name="settings_strip_camera">Kamerainfos entfernen</string>
@@ -336,18 +362,15 @@
     <string name="settings_strip_software_desc">Software-, Kommentar-, Urheber- und Copyright-Felder entfernen</string>
     <string name="settings_strip_authorship">Urheber und Copyright entfernen</string>
     <string name="settings_strip_share">Metadaten beim Teilen entfernen</string>
-    <string name="settings_strip_share_title">Metadaten beim Teilen</string>
     <string name="settings_strip_share_desc">Entfernt die ausgewählten Felder nur aus der geteilten Kopie, niemals aus dem Original. Bei Videos wird nur der Standort entfernt.</string>
     <string name="settings_strip_format_note">Manche Formate, etwa HEIC, können Metadaten-Änderungen nicht speichern. Wenn das Entfernen von Metadaten aktiviert ist, wird die hochgeladene Kopie eines solchen Fotos in JPEG umgewandelt, damit die ausgewählten Daten tatsächlich entfernt werden. Das Foto auf dem Gerät bleibt unverändert.</string>
-    <string name="settings_compress_upload_desc">Lädt eine leichtere Version hoch, um Speicher zu sparen. Die Kopie auf dem Gerät bleibt in voller Qualität, solange die lokale Spiegelung unten nicht aktiv ist.</string>
     <string name="settings_compress_photos">Fotos komprimieren</string>
     <string name="settings_compress_videos">Videos komprimieren</string>
-    <string name="settings_compress_videos_desc">Wandelt Videos vor dem Hochladen in eine kleinere Größe um. Das Original auf dem Gerät wird nie verändert.</string>
+    <string name="settings_compress_hdr_photos">Auch HDR-Fotos komprimieren</string>
     <string name="settings_compress_tier_light_desc">Kaum sichtbarer Qualitätsverlust, moderate Speicherersparnis</string>
     <string name="settings_compress_tier_balanced_desc">Gute Qualität bei deutlicher Speicherersparnis</string>
     <string name="settings_compress_tier_space_saver_desc">Kleinste Uploads, sichtbarerer Qualitätsverlust</string>
     <string name="settings_app_lock">App-Sperre</string>
-    <string name="settings_app_lock_desc">Biometrie oder PIN beim Öffnen der App erforderlich</string>
     <string name="settings_app_lock_timeout">Sperren nach</string>
     <string name="settings_app_lock_timeout_desc">App nach dieser Zeit im Hintergrund erneut sperren</string>
     <string name="settings_app_lock_timeout_immediate">Sofort</string>
@@ -360,7 +383,6 @@
     <string name="settings_app_lock_timeout_15min">15 Minuten</string>
     <string name="settings_app_lock_timeout_1h">1 Stunde</string>
     <string name="settings_clear_cache_on_close">Cache beim Schließen leeren</string>
-    <string name="settings_clear_cache_on_close_desc">Lokale Kopien angesehener Cloud-Fotos löschen, sobald die App in den Hintergrund geht. Werden beim nächsten Öffnen erneut geladen.</string>
     <string name="settings_screenshot_overlay">Screenshot-Schnellaktionen</string>
     <string name="settings_screenshot_overlay_desc">Zeigt eine kleine Aktionsleiste über einem neuen Screenshot, sodass er sich bearbeiten, teilen, zu Drive hochladen oder verlinken lässt. Auf manchen Telefonen lässt sich die integrierte Screenshot-Leiste nicht abschalten, sodass beide erscheinen können.</string>
     <string name="screenshot_overlay_channel_desc">Die Benachrichtigung, die angezeigt wird, während die Screenshot-Schnellaktionen laufen.</string>
@@ -385,18 +407,11 @@
     <string name="settings_timeline_section_layout">Layout</string>
     <string name="settings_timeline_section_display">Darstellung</string>
     <string name="settings_show_scroll_date">Datum beim Scrollen anzeigen</string>
-    <string name="settings_show_scroll_date_desc">Beim Scrollen erscheint ein schwebendes Label mit Monat und Jahr über dem Verlauf, sodass du immer einen zeitlichen Bezug hast.</string>
     <string name="settings_reverse_timeline">Verlauf umkehren</string>
-    <string name="settings_reverse_timeline_desc">Zeige die ältesten Fotos oben und die neuesten unten. Der Verlauf öffnet sich bei deinen neuesten Fotos.</string>
     <string name="settings_mosaic_grid">Mosaikraster</string>
-    <string name="settings_mosaic_grid_desc">Stelle den Verlauf als versetztes Mosaik dar, bei dem jedes Foto seine eigene Form behält, sodass Hochformatfotos höher wirken.</string>
     <string name="settings_seamless_grid">Randlos</string>
-    <string name="settings_seamless_grid_desc">Dichteres Raster mit eckigen Ecken und Miniaturansichten bis zum Bildschirmrand.</string>
-    <string name="timeline_filter_subtitle">Wähle aus, was in deinem Haupt-Feed nicht erscheinen soll. Ausgeblendete Fotos bleiben auf dem Gerät und werden weiter gesichert.</string>
     <string name="timeline_filter_categories_header">Kategorieleiste</string>
     <string name="timeline_filter_layout_desc">Gilt für alle Fotoraster</string>
-    <string name="timeline_filter_reorder_hint">Lege mit den Pfeilen die Reihenfolge der Kategorieleiste über deiner Fotos-Timeline fest.</string>
-    <string name="timeline_filter_per_album_hint">Einzelne Alben aus der Timeline ausblenden. Der Schalter oben blendet alle auf einmal aus.</string>
     <string name="timeline_filter_hidden_album">Ausgeblendetes Album</string>
     <string name="timeline_filter_albums_header">Drive-Alben</string>
     <string name="timeline_filter_more_settings">Weitere Einstellungen</string>
@@ -405,11 +420,12 @@
     <string name="settings_telemetry_on">Ein</string>
     <string name="settings_telemetry_off">Aus</string>
     <string name="settings_telemetry_checking">Wird geprüft…</string>
-    <string name="settings_privacy_map_tiles_note">Die Hintergrundkacheln der Karte kommen von OpenStreetMap, deren Server sehen also deine IP-Adresse und den Kartenausschnitt, den du dir ansiehst. Deine Fotos und ihre Standorte werden nie gesendet.</string>
     <string name="settings_hidden_photos">Versteckte Fotos</string>
     <string name="settings_hidden_photos_desc">Aus der Hauptgalerie ausgeblendete Fotos, entsperrt per Gerätebiometrie oder PIN</string>
     <string name="settings_appearance">Darstellung &amp; Sprache</string>
-    <string name="settings_appearance_desc">Design, Palette, App-Sprache</string>
+    <string name="settings_appearance_desc">Design, Sprache, Verlauf und Alben</string>
+    <string name="settings_section_look">Darstellung</string>
+    <string name="settings_section_library">Bibliothek</string>
     <string name="settings_landing_tab">Startseite</string>
     <string name="settings_landing_tab_desc">Welcher Tab beim Start der App geöffnet wird</string>
     <string name="settings_strip_customize">Welche Metadaten entfernt werden</string>
@@ -418,7 +434,9 @@
     <string name="albums_empty_title">Noch keine Alben</string>
     <string name="albums_empty_subtitle">In Drive erstellte Alben werden hier angezeigt</string>
     <string name="albums_empty_local">Keine Ordner auf diesem Gerät</string>
+    <string name="cd_select_day">Diesen Tag auswählen</string>
     <string name="cd_select_month">Diesen Monat auswählen</string>
+    <string name="cd_select_year">Dieses Jahr auswählen</string>
     <string name="selection_photos_only">%d Fotos</string>
     <string name="selection_videos_only">%d Videos</string>
     <string name="selection_mixed">%1$d Fotos, %2$d Videos</string>
@@ -503,13 +521,9 @@
     <string name="map_style_modern">Weltkarte</string>
     <string name="map_style_modern_summary">Ein moderner Globus, den du zu deinen Orten drehen kannst.</string>
     <string name="settings_amoled_black">Reines Schwarz (AMOLED)</string>
-    <string name="settings_amoled_black_summary">Im dunklen Modus echtes Schwarz als Hintergrund verwenden, um auf OLED-Displays Strom zu sparen.</string>
     <string name="settings_tint_cloud">Cloud-Symbole in Akzentfarbe</string>
-    <string name="settings_tint_cloud_summary">Für die Cloud-Symbole gesicherter Fotos die Akzentfarbe statt Grün verwenden.</string>
     <string name="settings_gif_autoplay_grid">GIFs in Rastern abspielen</string>
-    <string name="settings_gif_autoplay_grid_summary">GIFs in der Zeitleiste, in Alben und Geräteordnern animieren. Wenn aus, wird ein Standbild gezeigt.</string>
     <string name="settings_gif_autoplay_covers">GIF-Albumcover abspielen</string>
-    <string name="settings_gif_autoplay_covers_summary">Ein Albumcover animieren, wenn es ein GIF ist, auch bei Cloud-Alben (das Cover wird einmal heruntergeladen).</string>
 
     <!-- Language -->
     <string name="language_en">Englisch, English</string>
@@ -523,6 +537,7 @@
     <string name="language_sk">Slowakisch, Slovenčina</string>
     <string name="language_sl">Slowenisch, Slovenščina</string>
     <string name="language_cs">Tschechisch, Čeština</string>
+    <string name="language_tr">Türkisch, Türkçe</string>
     <string name="language_section">Anzeigesprache</string>
 
     <!-- About -->
@@ -556,6 +571,10 @@
     <string name="albums_create_album">Album erstellen</string>
     <string name="albums_create_album_hint">Albumname</string>
     <string name="albums_no_photos">Keine Fotos in diesem Album</string>
+    <plurals name="albums_photos_uploading">
+        <item quantity="one">%1$d Foto wird hochgeladen</item>
+        <item quantity="other">%1$d Fotos werden hochgeladen</item>
+    </plurals>
     <string name="albums_download_all">Alles herunterladen</string>
     <string name="album_download_channel_name">Album-Downloads</string>
     <string name="album_download_channel_desc">Zeigt den Fortschritt beim Herunterladen eines Albums im Hintergrund.</string>
@@ -588,6 +607,17 @@
     <string name="import_done_button">Fertig</string>
     <string name="import_failed_title">Import fehlgeschlagen</string>
     <string name="import_failed_msg">Beim Import ist etwas schiefgelaufen. Wähle die Datei aus und versuche es erneut.</string>
+    <string name="import_reason_storage">Auf dem Gerät ist der freie Speicher ausgegangen.</string>
+    <string name="import_reason_source">Die Datei konnte von ihrem Speicherort nicht gelesen werden.</string>
+    <string name="import_reason_archive">Die ZIP-Datei scheint beschädigt oder unvollständig zu sein.</string>
+    <string name="import_reason_other">Beim Lesen der ZIP-Datei ist etwas schiefgelaufen.</string>
+    <string name="import_failed_hint_resume">Wähle die Datei erneut aus. Es geht dort weiter, wo es aufgehört hat.</string>
+    <string name="import_failed_hint_archive">Versuche, diesen Teil des Exports erneut herunterzuladen.</string>
+    <string name="import_review_partial">%1$s Unten ist nur ein Teil des Archivs aufgelistet. Importiere diese und wähle die ZIP-Datei dann erneut aus, um den Rest hinzuzufügen.</string>
+    <string name="import_scan_bytes">Export wird gelesen: %1$s von %2$s</string>
+    <string name="import_scan_notification">Export wird gelesen: %1$d %%</string>
+    <string name="import_resuming">Es geht dort weiter, wo es aufgehört hat</string>
+    <string name="import_catchup_bytes">Es geht dort weiter, wo es aufgehört hat: %1$s von %2$s</string>
     <!-- Import review queue. -->
     <string name="import_staging_title">Import wird vorbereitet</string>
     <string name="import_uploading_title">Fotos werden hochgeladen</string>
@@ -676,6 +706,8 @@
     <string name="share_all">Alle</string>
     <string name="share_shared_with_me">Mit mir geteilt</string>
     <string name="share_shared_by_me">Von mir geteilt</string>
+    <string name="share_scope_with_me">Mit mir</string>
+    <string name="share_scope_by_me">Von mir</string>
     <string name="share_filter_account">Nach Konto filtern</string>
 
     <!-- Share sheet, redesigned to mirror the Drive web dialog -->
@@ -718,6 +750,8 @@
 
     <!-- Content filter sheet -->
     <string name="filter_title">Filter</string>
+    <string name="filter_quick_dates">Datum-Schnellwahl</string>
+    <string name="filter_pick_date">Datum wählen</string>
     <string name="filter_type_label">Typ</string>
     <string name="filter_type_videos">Videos</string>
     <string name="filter_sync_label">Sync-Status</string>
@@ -749,10 +783,21 @@
 
     <!-- Suche -->
     <string name="search_title">Suche</string>
-    <string name="search_placeholder">Nach Dateinamen suchen</string>
-    <string name="search_placeholder_semantic">Fotos durchsuchen</string>
+    <string name="search_placeholder">Fotos durchsuchen</string>
     <string name="search_empty_idle">Namen eingeben, um zu suchen</string>
     <string name="search_empty_no_results">Keine Treffer</string>
+    <string name="search_rel_today">heute</string>
+    <string name="search_rel_yesterday">gestern</string>
+    <string name="search_rel_this_month">diesen Monat|dieser Monat</string>
+    <string name="search_rel_last_month">letzten Monat|letzter Monat|vorigen Monat|vergangenen Monat</string>
+    <string name="search_rel_this_year">dieses Jahr</string>
+    <string name="search_rel_last_year">letztes Jahr|letzten Jahres|vergangenes Jahr|voriges Jahr</string>
+    <string name="search_rel_this_week">diese Woche|dieser Woche</string>
+    <string name="search_rel_last_week">letzte Woche|letzter Woche|vergangene Woche|vorige Woche</string>
+    <string name="search_ago_days">vor # Tagen|vor # Tag|vor einem Tag</string>
+    <string name="search_ago_weeks">vor # Wochen|vor # Woche|vor einer Woche</string>
+    <string name="search_ago_months">vor # Monaten|vor # Monat|vor einem Monat</string>
+    <string name="search_ago_years">vor # Jahren|vor # Jahr|vor einem Jahr</string>
 
     <string name="viewer_play_slideshow">Diashow starten</string>
     <string name="viewer_pause_slideshow">Diashow pausieren</string>
@@ -941,6 +986,10 @@
     <string name="model_download_progress">%1$s von %2$s</string>
     <string name="model_download_preparing">Wird vorbereitet…</string>
     <string name="model_download_stop">Beenden</string>
+    <string name="ml_sync_channel_name">Gesichts- und Suchdaten</string>
+    <string name="ml_sync_channel_desc">Zeigt den Fortschritt, während Gesichts- und Suchdaten auf Proton Drive gespeichert oder von dort wiederhergestellt werden.</string>
+    <string name="ml_sync_save_title">Gesichts- und Suchdaten werden auf Drive gespeichert…</string>
+    <string name="ml_sync_restore_title">Gesichts- und Suchdaten werden von Drive wiederhergestellt…</string>
     <string name="search_section_on_this_day">An diesem Tag</string>
     <string name="search_section_on_this_day_years">Vor %1$d Jahr</string>
     <string name="search_section_on_this_day_years_plural">Vor %1$d Jahren</string>
@@ -948,9 +997,6 @@
     <string name="search_section_recent">Zuletzt</string>
     <string name="map_title">Karte</string>
     <string name="map_vector_title">Weltkarte</string>
-    <string name="map_card_title">Karte</string>
-    <string name="map_card_subtitle_empty">Noch keine verorteten Fotos</string>
-    <string name="map_card_calendar_subtitle">Deine Fotos in der Kalenderansicht</string>
     <string name="map_search_places">Orte suchen</string>
     <string name="places_title">Orte</string>
     <string name="map_search_no_places">Noch keine Orte</string>
@@ -976,7 +1022,6 @@
     <string name="update_downloading">Wird heruntergeladen… %1$d%%</string>
     <string name="update_install_prompt">Download abgeschlossen. Jetzt installieren?</string>
     <string name="update_check_settings_row">Auf Updates prüfen</string>
-    <string name="update_check_settings_summary">Du hast Version %1$s</string>
     <string name="update_no_update">Du hast die neueste Version.</string>
     <string name="update_check_failed">Konnte nicht auf Updates prüfen. Versuche es später erneut.</string>
     <string name="update_permission_required">Erlaube die Installation unbekannter Apps in den Systemeinstellungen.</string>
@@ -999,6 +1044,7 @@
     <string name="cd_editor_reset">Zurücksetzen</string>
     <string name="cd_viewer_edit">Bearbeiten</string>
     <string name="cd_viewer_metadata_edit">Feld bearbeiten</string>
+    <string name="cd_viewer_open_map">Auf der Karte anzeigen</string>
     <string name="cd_clear_search">Suche löschen</string>
 
     <string name="shared_save_to_library">In Bibliothek speichern</string>
@@ -1030,6 +1076,13 @@
     <string name="device_folder_hide_card">Ordner ausblenden</string>
     <string name="device_folder_hide_card_sub">Nimmt den Ordner aus Alben und verschiebt seine Fotos nach „Versteckte Fotos“, aus der Galerie des Geräts heraus, sodass andere Apps sie nicht mehr anzeigen. Vorhandene Proton Drive-Kopien bleiben genau so, wie sie sind.</string>
     <string name="device_folder_unhide">Ordner einblenden</string>
+    <string name="device_folder_delete">Ordner löschen</string>
+    <string name="device_folder_delete_confirm_title">Diesen Ordner löschen?</string>
+    <plurals name="device_folder_delete_confirm_body">
+        <item quantity="one">%1$d Foto oder Video in \"%2$s\" wird von diesem Gerät gelöscht.</item>
+        <item quantity="other">Alle %1$d Fotos und Videos in \"%2$s\" werden von diesem Gerät gelöscht.</item>
+    </plurals>
+    <string name="device_folder_delete_no_trash">Diese Android-Version hat keinen Papierkorb, daher ist das Löschen von diesem Gerät dauerhaft.</string>
     <string name="sync_folders_add_dialog_title">Ordner hinzufügen</string>
     <string name="sync_folders_add_row_title">Ordner per Name hinzufügen</string>
     <string name="sync_folders_add_dialog_name_hint">Ordnername</string>
@@ -1062,18 +1115,17 @@
     <string name="force_update_body">Diese Version wird nicht mehr unterstützt. Bitte aktualisieren, um fortzufahren.</string>
     <string name="force_update_action">Aktualisieren</string>
     <string name="notifications_title">Benachrichtigungen</string>
-    <string name="notifications_subtitle">Lege fest, welche Benachrichtigungen die App anzeigen darf. Standardmäßig ist alles aktiviert.</string>
-    <string name="notifications_nav_desc">Wähle, welche Benachrichtigungen du siehst</string>
     <string name="notifications_backup_status">Dauerhafte Sicherungs-Benachrichtigung</string>
     <string name="notifications_backup_status_desc">Zeigt die dauerhafte Benachrichtigung an, während die App auf neue Fotos wartet. Die Sicherung läuft auch ohne sie weiter und Upload-Benachrichtigungen erscheinen trotzdem; neue Fotos werden nur etwas weniger sofort erfasst.</string>
     <string name="notifications_album_download">Album-Downloads</string>
-    <string name="notifications_album_download_desc">Zeigt Fortschritt und eine Zusammenfassung an, wenn du ein Album auf dein Gerät herunterlädst.</string>
     <string name="notifications_delete_reminder">Erinnerung zum Löschen nach der Sicherung</string>
-    <string name="notifications_delete_reminder_desc">Erinnert dich nach einer Sicherung daran, welche Fotos sich gefahrlos von diesem Gerät entfernen lassen.</string>
     <string name="notifications_update_available">Neue Version verfügbar</string>
-    <string name="notifications_update_available_desc">Im Hintergrund nach einer neueren Version suchen und benachrichtigen, sobald eine erscheint. Im WLAN wird das Update schon vorab geladen, die Installation läuft dann sofort.</string>
     <string name="update_channel_name">App-Updates</string>
     <string name="update_channel_desc">Meldet, wenn eine neuere Version der App verfügbar ist.</string>
+    <string name="vault_rescue_channel_name">Hinweise zur Abmeldung</string>
+    <string name="vault_rescue_channel_desc">Meldet, wenn eine Abmeldung, die du nicht ausgelöst hast, deine versteckten Fotos zurück in die Galerie verschoben hat.</string>
+    <string name="vault_rescue_title">Du wurdest abgemeldet</string>
+    <string name="vault_rescue_text">Deine versteckten Fotos ohne Kopie in Drive wurden zurück in die Galerie verschoben, in den Ordner %1$s, damit keines verloren geht.</string>
     <string name="update_notification_text">Tippen, um Version %1$s zu installieren.</string>
     <string name="settings_backup_how_section">Wie gesichert wird</string>
     <string name="settings_theme_palette">Design &amp; Palette</string>
@@ -1087,13 +1139,28 @@
     <string name="albums_filter_sheet_title">Albumfilter</string>
     <string name="albums_filter_default_heading">Standard beim Öffnen</string>
     <string name="albums_filter_remember_last">Zuletzt verwendeten Filter merken</string>
-    <string name="albums_filter_remember_last_summary">Alben mit dem zuletzt gewählten Filter öffnen</string>
+    <string name="albums_show_collection">Zeile mit Verknüpfungen anzeigen</string>
+    <string name="albums_shortcuts_heading">Verknüpfungen</string>
+    <string name="albums_filter_excluded">Ausgeschlossen</string>
+    <string name="albums_excluded_empty">Keine ausgeschlossenen Alben oder Ordner</string>
+    <string name="albums_exclude_from_albums">Aus Alben ausschließen</string>
+    <string name="albums_show_in_albums">In Alben anzeigen</string>
     <string name="albums_sort_heading">Sortieren nach</string>
     <string name="albums_cover_size_heading">Covergröße</string>
     <string name="albums_sort_custom">Benutzerdefiniert</string>
     <string name="albums_sort_name">Name (A-Z)</string>
     <string name="albums_sort_activity">Letzte Aktivität</string>
     <string name="albums_sort_count">Anzahl der Fotos</string>
+    <string name="albums_show_heading">Anzeigen</string>
+    <string name="albums_view_heading">Ansicht</string>
+    <string name="albums_view_grid">Raster</string>
+    <string name="albums_view_list">Liste</string>
+    <string name="albums_more_settings">Weitere Einstellungen</string>
+    <string name="album_options">Albumoptionen</string>
+    <string name="album_group_heading">Gruppieren nach</string>
+    <string name="album_group_day">Tag</string>
+    <string name="album_group_month">Monat</string>
+    <string name="album_group_year">Jahr</string>
 
     <!-- Photo viewer details / metadata sheet -->
     <string name="viewer_meta_section_file_info">Dateiinfo</string>
@@ -1244,6 +1311,8 @@
     <string name="album_picker_title">Zum Album hinzufügen</string>
     <string name="album_picker_selected">%1$d ausgewählt</string>
     <string name="album_add_count">Hinzufügen (%1$d)</string>
+    <string name="picker_done">Fertig</string>
+    <string name="picker_nothing_selected">Keine Fotos ausgewählt</string>
     <string name="picker_selection_limit">Du kannst höchstens %1$d auf einmal auswählen</string>
     <string name="album_picker_empty">Keine Fotos zum Hinzufügen.</string>
 
@@ -1372,9 +1441,7 @@
 
     <!-- Grid layout (Appearance) -->
     <string name="grid_remember_last">Zuletzt verwendete merken</string>
-    <string name="grid_remember_last_desc">Deine Fotos mit der zuletzt verwendeten Zoomstufe öffnen</string>
     <string name="settings_keep_scroll_tabs">Position beim Tabwechsel behalten</string>
-    <string name="settings_keep_scroll_tabs_desc">Beim Tabwechsel bleibst du an Ort und Stelle, statt nach oben zu springen.</string>
     <string name="grid_default_columns_section">Fotos pro Zeile</string>
     <!-- FAQ -->
     <string name="faq_title">Häufige Fragen</string>
@@ -1453,7 +1520,6 @@
     <string name="whats_new_albums_drag">Für eine eigene Reihenfolge ein Album gedrückt halten, Alben neu anordnen wählen und die Cover an die gewünschte Stelle ziehen. Die Reihenfolge bleibt, bis du sie änderst.</string>
     <string name="whats_new_crop_title">Auf ein festes Format zuschneiden</string>
     <string name="whats_new_crop_body">Wähle im Editor 1:1, 4:3, 16:9 oder das Format des Fotos, und der Rahmen behält es beim Verkleinern bei.</string>
-    <string name="whats_new_history_desc">Die Highlights dieses und früherer Updates nachlesen</string>
     <string name="whats_new_version">Version %1$s</string>
     <string name="whats_new_more_241">Außerdem kannst du das Datum mehrerer Fotos auf einmal verschieben, einen ganzen Geräteordner ausblenden, und Updates installieren sich, ohne jedes Mal zu fragen. Auf einem anderen Gerät gelöschte Fotos verschwinden jetzt auch hier, selbst bei einer großen Mediathek, eine Umbenennung lässt keine Kopie mehr zurück, und Backup, Ausblenden, Duplikate und geteilte Alben laufen stabiler.</string>
     <string name="whats_new_more_240">Dazu bleiben kopierte Links in der Zwischenablage-Vorschau verborgen, Dateigrößen stimmen überall überein, die automatische Freigabe fragt bei Drive nach, bevor sie eine Kopie vom Telefon entfernt, und große Alben und Auswahlen bleiben stabiler.</string>
@@ -1464,9 +1530,14 @@
     <string name="thanks_2_5_0_website">Website</string>
     <string name="thanks_2_5_0_coffee">Spendier mir einen Kaffee</string>
     <string name="thanks_2_5_0_dismiss">Schließen</string>
-    <string name="offline_card_subtitle">Für die Offline-Ansicht gespeicherte Fotos</string>
     <string name="duplicates_filter_identical">Identisch</string>
     <string name="duplicates_filter_similar">Ähnlich</string>
+    <string name="duplicates_ignore_group">Ignorieren</string>
+    <string name="duplicates_unignore_group">Nicht mehr ignorieren</string>
+    <string name="duplicates_filter_ignored_label">Ignorierte Gruppen</string>
+    <string name="duplicates_filter_ignored">Ignorierte anzeigen</string>
+    <string name="duplicates_ignored_hint">Diese Gruppen fehlen in der Liste. Tippe auf „Nicht mehr ignorieren“, um eine zurückzuholen.</string>
+    <string name="duplicates_ignored_empty">Keine ignorierten Gruppen</string>
     <string name="duplicates_filter_match_label">Übereinstimmung</string>
     <string name="duplicates_badge_cloud">Cloud</string>
     <string name="duplicates_badge_device">Gerät</string>
@@ -1506,6 +1577,10 @@
     <string name="album_remove_confirm_body">Das entfernt nur die Auswahl aus dem Album. Deine Fotos bleiben in deiner Chronik.</string>
     <string name="action_remove">Entfernen</string>
     <string name="gallery_add_to_album_queued">Fotos werden hinzugefügt, sobald der Upload abgeschlossen ist</string>
+    <plurals name="gallery_add_to_album_some_queued">
+        <item quantity="one">Zum Album hinzugefügt. %1$d weiteres Foto folgt, sobald der Upload abgeschlossen ist</item>
+        <item quantity="other">Zum Album hinzugefügt. %1$d weitere Fotos folgen, sobald der Upload abgeschlossen ist</item>
+    </plurals>
     <string name="share_role_can_view_desc">Kann das Album und seine Fotos ansehen.</string>
     <string name="share_role_can_edit_desc">Kann Fotos hinzufügen und entfernen.</string>
     <string name="sel_label_back_up">Sichern</string>
@@ -1516,6 +1591,11 @@
     <string name="sel_label_unhide">Aus Versteckten Fotos herausnehmen</string>
     <string name="sel_show_actions">Aktionen anzeigen</string>
     <string name="sel_hide_actions">Aktionen ausblenden</string>
+    <plurals name="select_all_confirm_title">
+        <item quantity="one">%1$d Foto auswählen?</item>
+        <item quantity="other">%1$d Fotos auswählen?</item>
+    </plurals>
+    <string name="select_all_confirm_body">Aktionen mit so vielen Fotos auf einmal können eine Weile dauern.</string>
     <string name="picker_filter_all">Alle</string>
     <string name="picker_filter_cloud">Cloud</string>
     <string name="picker_filter_device">Gerät</string>
@@ -1567,9 +1647,7 @@
     <string name="metadata_editor_set">Festlegen</string>
     <string name="metadata_editor_place_label">Ort</string>
     <string name="metadata_editor_place_none">Kein Standort</string>
-    <string name="metadata_editor_place_choose_country">Land auswählen</string>
-    <string name="metadata_editor_place_country_hint">Wird nur ein Land gewählt, wird das Foto in dessen Mitte platziert.</string>
-    <string name="metadata_editor_place_search_city">Nach einer Stadt suchen</string>
+    <string name="metadata_editor_place_search">Land oder Stadt suchen</string>
     <string name="metadata_editor_place_remove">Standort entfernen</string>
     <string name="metadata_editor_country_search">Länder suchen</string>
     <string name="metadata_editor_note_cloud">Dieses Foto behält das Datum und den Ort, mit denen es auf Proton Drive hochgeladen wurde, daher können sie hier nicht geändert werden.</string>
@@ -1605,7 +1683,6 @@
     <string name="settings_ai_section">Maschinelles Lernen</string>
     <string name="settings_ai_nav_desc">Text kopieren, Gesichter verbergen und mehr, direkt auf dem Gerät</string>
     <string name="settings_ai_enable">Maschinelles Lernen aktivieren</string>
-    <string name="settings_ai_enable_desc">Alles läuft auf deinem Telefon. Wenn du dies aktivierst, kann die App die benötigten kleinen Modelle herunterladen und Text kopieren sowie Gesichter verbergen verwenden. Weitere Funktionen folgen.</string>
     <string name="settings_ai_ocr">Text kopieren</string>
     <string name="settings_ai_ocr_desc">Text in einem Foto erkennen und kopieren</string>
     <string name="settings_ai_ocr_downloading">Wird heruntergeladen…</string>
@@ -1650,23 +1727,14 @@
     <string name="settings_ai_semantic_indexing_waiting">Warten auf die Suchmodelle</string>
     <string name="settings_ai_semantic_ready">Deine Fotos sind durchsuchbar</string>
     <string name="settings_ai_semantic_rescan">Alle Fotos erneut scannen</string>
-    <string name="settings_ai_semantic_rescan_desc">Löscht den Suchindex und baut ihn für jedes Foto neu auf.</string>
     <string name="settings_ai_semantic_rescan_confirm_title">Alle Fotos erneut scannen?</string>
     <string name="settings_ai_semantic_rescan_confirm_msg">Der Suchindex wird gelöscht und dann für jedes Foto neu aufgebaut, was eine Weile dauern kann.</string>
     <string name="settings_ai_semantic_not_indexed">Deine Fotos sind noch nicht indexiert</string>
     <string name="settings_ai_semantic_clear">Suchdaten löschen</string>
-    <string name="settings_ai_semantic_clear_desc">Entfernt den Suchindex für jedes Foto von diesem Telefon.</string>
     <string name="settings_ai_semantic_clear_confirm_title">Suchdaten löschen?</string>
     <string name="settings_ai_semantic_clear_confirm_msg">Dies entfernt den Suchindex für jedes Foto. Deine Fotos sind nicht betroffen.</string>
     <string name="settings_face_section">Erkannte Gesichter</string>
     <string name="settings_face_maintenance">Wartung</string>
-    <string name="settings_face_transfer">Übertragung</string>
-    <string name="settings_face_rescan_desc">Erkennt Gesichter erneut und behält deine Namen und Korrekturen.</string>
-    <string name="settings_face_clear_desc">Entfernt alle gefundenen Personen und alle Gesichtsdaten von diesem Telefon.</string>
-    <string name="settings_face_export_desc">Speichert eine private Kopie, die du auf einem anderen Gerät wiederverwenden kannst.</string>
-    <string name="settings_face_import_desc">Lädt einen Gesichtsindex, den du zuvor gespeichert hast.</string>
-    <string name="settings_ai_import_confirm_title">Gesichtsindex importieren?</string>
-    <string name="settings_ai_import_confirm_msg">Dies fügt die Gesichter und Personen aus der Datei zu diesem Telefon hinzu und gruppiert sie neu. Deine aktuellen Gesichter bleiben erhalten.</string>
     <string name="settings_ai_indexing_running">Deine Fotos werden durchsucht</string>
     <string name="settings_ai_indexing_waiting">Warten auf das Gesichtsmodell</string>
     <string name="settings_ai_indexing_waiting_other">Warten, bis eine andere Aufgabe auf dem Gerät abgeschlossen ist</string>
@@ -1674,6 +1742,7 @@
     <string name="settings_ai_indexing_paused_battery">Pausiert, Akku niedrig</string>
     <string name="settings_ai_indexing_paused_warm">Pausiert, Telefon ist warm</string>
     <string name="settings_ai_indexing_paused_power_save">Pausiert, Energiesparmodus ist an</string>
+    <string name="settings_ai_indexing_paused_desc">Bis du fortsetzt, werden keine Fotos nach Gesichtern durchsucht.</string>
     <string name="settings_ai_indexing_progress">%1$d von %2$d Fotos</string>
     <plurals name="settings_ai_indexing_people">
         <item quantity="one">%1$d Person gefunden</item>
@@ -1686,7 +1755,6 @@
     <string name="settings_ai_clear_confirm_msg">Dies entfernt alle gefundenen Personen und alle Gesichtsdaten. Deine Fotos sind nicht betroffen. Gesichter werden beim nächsten Indexieren erneut erkannt.</string>
     <string name="gallery_add_to_person">Zu Person hinzufügen</string>
     <string name="people_search_hint">Personen suchen</string>
-    <string name="people_card_subtitle">Durchstöbere deine Fotos nach Person</string>
     <string name="person_set_cover">Als Titelbild festlegen</string>
     <string name="person_set_cover_confirm_title">Set as cover?</string>
     <string name="person_set_cover_confirm_body">Use this photo as the cover for this person.</string>
@@ -1702,7 +1770,6 @@
     <string name="people_none_named">Du hast noch niemanden benannt. Öffne die Überprüfung, um die von der App gefundenen Personen zu benennen, zusammenzuführen und aufzuräumen.</string>
     <string name="people_review_empty">Gerade keine unbenannten Personen. Während deine Fotos durchsucht werden, erscheinen hier Gruppen zum Benennen und Zusammenführen.</string>
     <string name="people_review_title">Zu benennende Personen</string>
-    <string name="person_add_needs_name">Benenne diese Person zuerst, füge dann Fotos zu ihr hinzu.</string>
     <string name="person_add_photos">Fotos hinzufügen</string>
     <string name="person_add_photos_title">Zu dieser Person hinzufügen</string>
     <string name="person_merge">Personen zusammenführen</string>
@@ -1724,6 +1791,14 @@
     <string name="person_merge_confirm_title">Personen zusammenführen?</string>
     <string name="person_merge_empty">Es gibt keine anderen Personen zum Zusammenführen.</string>
     <string name="person_merge_name_title">Mit einer Person zusammenführen</string>
+    <string name="name_or_merge_title">Wer ist das?</string>
+    <string name="name_or_merge_see_photos">Fotos ansehen</string>
+    <string name="name_or_merge_merge_body">Diese Gruppe wird mit %1$s zusammengeführt, und beide gelten ab jetzt als dieselbe Person. Dies kann nicht automatisch wieder getrennt werden.</string>
+    <string name="name_or_merge_failed">Änderung konnte nicht gespeichert werden</string>
+    <string name="add_to_person_choose_faces">Gesichter auswählen</string>
+    <string name="add_to_person_no_face">Kein Gesicht gefunden</string>
+    <string name="add_to_person_find_faces">Gesichter finden</string>
+    <string name="add_to_person_needs_face">Noch keine benannten Personen. Wähle ein Gesicht, um eine zu erstellen.</string>
     <string name="person_merge_pick_title">Wähle die Person zum Zusammenführen</string>
     <string name="person_not_a_person">Das ist keine Person</string>
     <string name="person_not_a_person_body">Die ausgewählten Gesichter werden aus Personen entfernt und bei jedem künftigen Scan übersprungen. Verwende dies für Statuen, Poster und Fehler. Die Fotos selbst werden nicht gelöscht.</string>
@@ -1748,22 +1823,78 @@
     <string name="person_suggestions_review_count">Vorschläge prüfen (%1$d)</string>
     <string name="more_options">Weitere Optionen</string>
     <string name="person_suggestions_title">Vorschläge</string>
-    <string name="settings_ai_export">Gesichtsindex exportieren</string>
-    <string name="settings_ai_export_done">Gesichtsindex exportiert (%1$d Gesichter).</string>
-    <string name="settings_ai_export_empty">Noch keine Gesichter zum Exportieren.</string>
-    <string name="settings_ai_export_warn_msg">Diese Datei enthält die aus deinen Fotos berechneten Gesichtsfingerabdrücke. Wer sie erhält, könnte ein Gesichtsmodell der Personen in deiner Bibliothek nachbilden, halte sie daher privat und teile sie nur mit Menschen, denen du vertraust.</string>
-    <string name="settings_ai_export_warn_title">Gesichtsindex exportieren?</string>
-    <string name="settings_ai_export_share_title">Gesichtsindex teilen?</string>
-    <string name="settings_ai_export_share_msg">Sende die exportierte Datei an eine andere App oder ein Gerät in der Nähe.</string>
-    <string name="settings_ai_import">Gesichtsindex importieren</string>
-    <string name="settings_ai_import_done">%1$d Gesichter, %2$d Personen importiert.</string>
     <string name="settings_ai_rescan">Fotos erneut scannen</string>
     <string name="settings_ai_rescan_confirm_msg">Jedes Foto wird mit höherem Detailgrad erneut auf Gesichter gescannt, wodurch kleinere und weiter entfernte Gesichter gefunden werden. Deine Namen und Korrekturen bleiben erhalten und werden wieder zugewiesen, sobald die Gesichter neu erkannt sind.</string>
     <string name="settings_ai_rescan_confirm_title">Alle Fotos erneut scannen?</string>
-    <string name="settings_ai_transfer_failed">Übertragung des Gesichtsindex fehlgeschlagen.</string>
-    <string name="settings_ai_transfer_working">Wird ausgeführt…</string>
-    <string name="settings_ai_import_wrong_account">Dieser Gesichtsindex gehört zu einem anderen Konto und kann hier nicht geöffnet werden.</string>
-    <string name="settings_ai_import_reattach">Dieser Index nutzte ein anderes Modell. Seine %1$d Namen kehren zu Ihren Fotos zurück, sobald sie erneut durchsucht werden.</string>
+    <string name="settings_ml_drive_section">Gesichts- und Suchdaten auf Drive</string>
+    <string name="settings_ml_drive_save">Auf Drive speichern</string>
+    <string name="settings_ml_drive_save_desc">Speichert eine verschlüsselte Kopie, die deine anderen Geräte wiederherstellen können</string>
+    <string name="settings_ml_drive_restore">Von Drive wiederherstellen</string>
+    <string name="settings_ml_drive_restore_desc">Nutzt die gespeicherten Daten eines deiner Geräte, statt erneut zu scannen</string>
+    <string name="settings_ml_drive_step_preparing">Wird vorbereitet…</string>
+    <string name="settings_ml_drive_step_encrypting_faces">Gesichtsdaten werden verschlüsselt…</string>
+    <string name="settings_ml_drive_step_encrypting_search">Suchdaten werden verschlüsselt…</string>
+    <string name="settings_ml_drive_step_uploading_faces">Gesichtsdaten werden hochgeladen…</string>
+    <string name="settings_ml_drive_step_uploading_search">Suchdaten werden hochgeladen…</string>
+    <string name="settings_ml_drive_step_downloading_faces">Gesichtsdaten werden heruntergeladen…</string>
+    <string name="settings_ml_drive_step_downloading_search">Suchdaten werden heruntergeladen…</string>
+    <string name="settings_ml_drive_step_importing_faces">Gesichtsdaten werden importiert…</string>
+    <string name="settings_ml_drive_step_importing_search">Suchdaten werden importiert…</string>
+    <string name="settings_ml_drive_step_finishing">Wird abgeschlossen…</string>
+    <string name="settings_ml_drive_folder_title">Ordner in deinem Drive erstellen?</string>
+    <string name="settings_ml_drive_folder_message">Beim Speichern wird unter Meine Dateien der Ordner „Photos for Proton/ML data“ erstellt. Die Gesichts- und Suchdaten darin sind wie deine Fotos Ende-zu-Ende-verschlüsselt und belegen Speicherplatz in deinem Drive.</string>
+    <string name="settings_ml_drive_folder_confirm">Erstellen und speichern</string>
+    <string name="settings_ml_drive_restore_loading">Gespeicherte Daten werden gesucht…</string>
+    <string name="settings_ml_drive_restore_pick">Wähle das Gerät, von dem wiederhergestellt werden soll.</string>
+    <string name="settings_ml_drive_restore_empty">Auf Drive ist noch nichts gespeichert. Tippe auf dem Gerät mit den Daten auf „Auf Drive speichern“ und versuche es dann erneut.</string>
+    <string name="settings_ml_drive_restore_list_failed">Dein Drive ist nicht erreichbar. Versuche es später erneut.</string>
+    <string name="settings_ml_drive_this_device">Dieses Gerät</string>
+    <string name="settings_ml_drive_another_device">Anderes Gerät</string>
+    <string name="settings_ml_drive_holds_both">Gesichts- und Suchdaten</string>
+    <string name="settings_ml_drive_holds_faces">Gesichtsdaten</string>
+    <string name="settings_ml_drive_holds_search">Suchdaten</string>
+    <string name="settings_ml_drive_saved_at">Gespeichert am %1$s</string>
+    <string name="settings_ml_drive_restore_confirm">Wiederherstellen</string>
+    <string name="settings_ml_drive_mode_title">Zusammenführen oder ersetzen?</string>
+    <string name="settings_ml_drive_mode_message">Auf diesem Gerät gibt es bereits Gesichtsdaten. Wähle, wie wiederhergestellt wird.</string>
+    <string name="settings_ml_drive_mode_merge">Zusammenführen</string>
+    <string name="settings_ml_drive_mode_merge_desc">Behält die Namen dieses Geräts und fügt die gespeicherten hinzu</string>
+    <string name="settings_ml_drive_mode_replace">Ersetzen</string>
+    <string name="settings_ml_drive_mode_replace_desc">Verwendet die gespeicherten Gesichter und Namen für die Fotos in deinem Drive</string>
+    <string name="settings_ml_drive_saved">Auf Drive gespeichert</string>
+    <string name="settings_ml_drive_restored">Von Drive wiederhergestellt</string>
+    <string name="settings_ml_drive_saved_partly">Teilweise gespeichert</string>
+    <string name="settings_ml_drive_restored_partly">Teilweise wiederhergestellt</string>
+    <string name="settings_ml_drive_save_failed">Speichern auf Drive fehlgeschlagen</string>
+    <string name="settings_ml_drive_restore_failed">Wiederherstellen von Drive fehlgeschlagen</string>
+    <string name="settings_ml_drive_nothing_title">Noch nichts zu speichern</string>
+    <string name="settings_ml_drive_nothing_message">Auf diesem Gerät gibt es noch keine Gesichts- oder Suchdaten. Lass zuerst die Gesichtserkennung oder die semantische Suche deine Fotos scannen.</string>
+    <string name="settings_ml_drive_not_capable">Auf diesem Gerät nicht verfügbar</string>
+    <string name="settings_ml_drive_faces_not_saved">Die Gesichtsdaten konnten nicht gespeichert werden.</string>
+    <string name="settings_ml_drive_search_not_saved">Die Suchdaten konnten nicht gespeichert werden.</string>
+    <string name="settings_ml_drive_faces_not_restored">Die Gesichtsdaten konnten nicht wiederhergestellt werden.</string>
+    <string name="settings_ml_drive_search_not_restored">Die Suchdaten konnten nicht wiederhergestellt werden.</string>
+    <string name="settings_ml_drive_try_later">Versuche es später erneut.</string>
+    <string name="settings_ml_drive_too_new">Die Daten wurden mit einer neueren Version der App gespeichert. Aktualisiere die App und versuche es erneut.</string>
+    <string name="settings_ml_drive_wrong_account">Dieses Konto kann die Daten nicht mehr öffnen.</string>
+    <string name="settings_ml_drive_damaged">Die gespeicherte Kopie ist beschädigt. Speichere sie auf dem Gerät, von dem sie stammt, erneut.</string>
+    <string name="settings_ml_restore_no_space">Nicht genug freier Speicherplatz, um diese Daten wiederherzustellen. Gib etwas Platz frei und versuche es erneut.</string>
+    <string name="settings_ml_drive_names_only">Die gespeicherten Gesichter stammen von einem anderen Gesichtsmodell, daher wurden nur ihre Namen wiederhergestellt. Die Namen kehren zu deinen Fotos zurück, sobald die Bibliothek gescannt wird.</string>
+    <string name="settings_ml_drive_search_other_model">Die gespeicherten Suchdaten stammen von einem anderen Suchmodell, daher bereitet dieses Gerät diese Fotos selbst für die Suche vor.</string>
+    <plurals name="settings_ml_drive_count_faces">
+        <item quantity="one">%1$d Gesicht</item>
+        <item quantity="other">%1$d Gesichter</item>
+    </plurals>
+    <plurals name="settings_ml_drive_count_people">
+        <item quantity="one">%1$d Person</item>
+        <item quantity="other">%1$d Personen</item>
+    </plurals>
+    <plurals name="settings_ml_drive_count_search">
+        <item quantity="one">Suchdaten für %1$d Foto</item>
+        <item quantity="other">Suchdaten für %1$d Fotos</item>
+    </plurals>
+    <string name="settings_ml_drive_list_two">%1$s und %2$s</string>
+    <string name="settings_ml_drive_list_three">%1$s, %2$s und %3$s</string>
     <plurals name="person_suggestions_left">
         <item quantity="one">%1$d zu überprüfen</item>
         <item quantity="other">%1$d zu überprüfen</item>
@@ -1771,9 +1902,7 @@
     <string name="news_title">News</string>
     <string name="news_banner">Neue Neuigkeiten</string>
     <string name="news_new_badge">Neu</string>
-    <string name="news_settings_desc">Nachrichten und Neuigkeiten zur App</string>
     <string name="news_show_title">News anzeigen</string>
-    <string name="news_show_desc">Ein kleiner Punkt erscheint, wenn es etwas Neues gibt</string>
     <string name="news_empty">Gerade nichts Neues.</string>
     <string name="news_read_more">Mehr lesen</string>
     <string name="news_feedback_heading">Fragen oder ein Fehler?</string>
@@ -1798,6 +1927,7 @@
     <string name="duplicates_leave_title">Auswahl verwerfen?</string>
     <string name="duplicates_leave_message">Du hast %1$d ausgewählt. Wenn du jetzt gehst, geht deine Auswahl verloren.</string>
     <string name="duplicates_leave_confirm">Verlassen</string>
+    <string name="duplicates_select_all_but_first">Alle außer der ersten auswählen</string>
     <string name="metadata_editor_date_mode_filename">Aus Dateiname</string>
     <string name="metadata_editor_filename_hint">Setzt das Datum jedes Fotos anhand des im Dateinamen enthaltenen Datums.</string>
     <string name="metadata_editor_filename_apply">Daten korrigieren</string>
@@ -1916,6 +2046,10 @@
     <string name="editor_tool_color">Farbe</string>
     <string name="editor_tool_draw">Zeichnen</string>
     <string name="editor_tool_text">Text</string>
+    <string name="editor_tool_frame">Rahmen</string>
+    <string name="editor_frame_none">Ohne</string>
+    <string name="editor_frame_polaroid">Polaroid</string>
+    <string name="editor_frame_hint">Mit zwei Fingern das Foto skalieren, ziehen zum Verschieben</string>
 
     <!-- Video editor -->
     <string name="video_editor_frame_failed">Einzelbild konnte nicht gespeichert werden</string>
@@ -2086,7 +2220,6 @@
     <string name="folder_rename">Ordner umbenennen</string>
     <string name="folder_renamed">Umbenannt in \"%1$s\"</string>
     <string name="settings_face_excluded">Ausgeschlossene Gesichter</string>
-    <string name="settings_face_excluded_desc">Gesichter ansehen, die du von einer Person entfernt oder verworfen hast</string>
     <string name="face_excluded_empty">Nichts ist ausgeschlossen. Gesichter, die du von einer Person entfernst oder verwirfst, weil es keine Person ist, erscheinen hier, damit du sie rückgängig machen kannst.</string>
     <string name="face_excluded_not_person_section">Nicht diese Person: %1$s</string>
     <string name="face_excluded_ignored_section">Verworfen (keine Person)</string>
@@ -2101,7 +2234,93 @@
     <string name="person_move_confirm_body">Die ausgewählten Fotos zu %1$s verschieben?</string>
     <string name="person_move_confirm">Verschieben</string>
     <string name="settings_face_auto_merge">Wahrscheinliche Übereinstimmungen automatisch zusammenführen</string>
-    <string name="settings_face_auto_merge_desc">Wenn ein Scan eine Gruppe findet, die sehr wahrscheinlich eine bereits benannte Person ist, wird sie ohne Nachfrage hinzugefügt. Zusammenführungen können nicht rückgängig gemacht werden, lass dies also aus, um jede selbst zu bestätigen.</string>
+
+    <string name="label_section_title">Labels</string>
+    <string name="label_add_hint">Label hinzufügen</string>
+    <string name="label_add_chip">Label hinzufügen</string>
+    <string name="label_remove_cd">Label %1$s entfernen</string>
+    <plurals name="label_full_hint">
+        <item quantity="one">%1$d von %2$d Label</item>
+        <item quantity="other">%1$d von %2$d Labels</item>
+    </plurals>
+    <plurals name="label_feedback_full">
+        <item quantity="one">Ein Foto kann bis zu %1$d Label haben</item>
+        <item quantity="other">Ein Foto kann bis zu %1$d Labels haben</item>
+    </plurals>
+    <string name="label_first_use_note">Labels werden nur in der App gespeichert. Proton Drive hat keine eigenen Labels.</string>
+    <string name="label_bulk_action">Labels hinzufügen</string>
+    <string name="label_bulk_hint">Labels, durch Kommas getrennt</string>
+    <string name="label_bulk_confirm">Hinzufügen</string>
+    <plurals name="label_bulk_added">
+        <item quantity="one">Labels zu %d Foto hinzugefügt.</item>
+        <item quantity="other">Labels zu %d Fotos hinzugefügt.</item>
+    </plurals>
+    <plurals name="label_bulk_limited">
+        <item quantity="one">%1$d Foto hat das Limit von %2$d Labels erreicht.</item>
+        <item quantity="other">%1$d Fotos haben das Limit von %2$d Labels erreicht.</item>
+    </plurals>
+    <string name="label_bulk_nothing_new">Die ausgewählten Fotos haben diese Labels bereits.</string>
+    <string name="label_bulk_failed">Die Labels konnten nicht hinzugefügt werden.</string>
+    <string name="label_settings_desc">Labels umbenennen, zusammenführen oder entfernen</string>
+    <string name="label_settings_empty">Noch keine Labels. Füge sie in den Details eines Fotos hinzu.</string>
+    <string name="label_sync_channel_name">Label-Sicherung</string>
+    <string name="label_sync_channel_desc">Zeigt den Fortschritt, während Labels in Proton Drive gespeichert oder daraus wiederhergestellt werden.</string>
+    <string name="label_sync_save_title">Labels werden in Drive gespeichert…</string>
+    <string name="label_sync_restore_title">Labels werden aus Drive wiederhergestellt…</string>
+    <string name="label_backup_step_encrypting">Labels werden verschlüsselt…</string>
+    <string name="label_backup_step_uploading">Labels werden hochgeladen…</string>
+    <string name="label_backup_step_looking">Gespeicherte Labels werden gesucht…</string>
+    <string name="label_backup_step_downloading">Gespeicherte Labels werden heruntergeladen…</string>
+    <string name="label_backup_step_merging">Labels werden zusammengeführt…</string>
+    <string name="label_input_hint">Labels suchen oder hinzufügen</string>
+    <string name="label_create_row">„%1$s“ erstellen</string>
+    <string name="label_locked">Labels lassen sich nicht ändern, solange sie in Drive gespeichert oder daraus wiederhergestellt werden.</string>
+    <string name="label_no_photos">Keine Fotos</string>
+    <string name="label_add_photos">Fotos hinzufügen</string>
+    <string name="label_picker_title">Fotos zu „%1$s“ hinzufügen</string>
+    <string name="label_picker_title_many">Fotos zu den ausgewählten Labels hinzufügen</string>
+    <string name="label_delete_selected">Labels löschen</string>
+    <string name="label_delete_selected_title">Die ausgewählten Labels löschen?</string>
+    <string name="label_delete_selected_message">Sie werden von allen Fotos entfernt, auf denen sie sind.</string>
+    <string name="label_leave_selection_title">Labels-Seite verlassen?</string>
+    <string name="label_leave_selection_message">Deine Auswahl wird aufgehoben.</string>
+    <string name="label_leave_selection_confirm">Verlassen</string>
+    <string name="label_backup_section">Labels auf Drive</string>
+    <string name="label_backup_save_desc">Eine verschlüsselte Kopie deiner Labels in Drive aufbewahren</string>
+    <string name="label_backup_restore_desc">Labels zusammenführen, die dieses oder ein anderes Gerät gespeichert hat</string>
+    <string name="label_backup_restore_note">Stellt die damals gespeicherten Labels wieder her, auch die seitdem gelöschten. Seitdem hinzugefügte Labels bleiben erhalten.</string>
+    <string name="label_backup_show_all">Alle anzeigen (%1$d)</string>
+    <string name="label_backup_save_confirm_title">Labels auf Drive speichern?</string>
+    <string name="label_backup_save_confirm_message">Die Kopie, die dieses Gerät zuvor gespeichert hat, wird ersetzt. Die Labels sind wie deine Fotos Ende-zu-Ende-verschlüsselt.</string>
+    <string name="label_backup_working_save">Labels werden gespeichert…</string>
+    <string name="label_backup_working_restore">Labels werden wiederhergestellt…</string>
+    <string name="label_backup_folder_message">Beim Speichern wird unter Meine Dateien der Ordner „Photos for Proton/Labels“ erstellt. Die Labels darin sind wie deine Fotos Ende-zu-Ende-verschlüsselt und belegen Speicherplatz in deinem Drive.</string>
+    <string name="label_backup_nothing_message">Noch kein Foto hat Labels. Füge zuerst einem Foto ein Label hinzu.</string>
+    <string name="label_backup_restore_empty">Auf Drive sind noch keine Labels gespeichert. Tippe auf dem Gerät, das sie hat, auf „Auf Drive speichern“ und versuche es dann erneut.</string>
+    <string name="label_backup_up_to_date">Deine Labels sind bereits auf dem neuesten Stand.</string>
+    <plurals name="label_backup_saved_count">
+        <item quantity="one">Labels von %d Foto gespeichert.</item>
+        <item quantity="other">Labels von %d Fotos gespeichert.</item>
+    </plurals>
+    <plurals name="label_backup_restored_count">
+        <item quantity="one">Labels bei %d Foto aktualisiert.</item>
+        <item quantity="other">Labels bei %d Fotos aktualisiert.</item>
+    </plurals>
+    <string name="label_rename_title">Label umbenennen</string>
+    <string name="label_rename_merge_note">Ein Label namens %1$s existiert bereits. Beim Speichern werden beide zu einem Label zusammengeführt.</string>
+    <string name="label_rename_save">Speichern</string>
+    <string name="label_rename_merge">Zusammenführen</string>
+    <string name="label_delete_action">Label löschen</string>
+    <plurals name="label_delete_confirm_title">
+        <item quantity="one">Dieses Label von %d Foto entfernen?</item>
+        <item quantity="other">Dieses Label von %d Fotos entfernen?</item>
+    </plurals>
+    <string name="label_delete_confirm">Entfernen</string>
+    <string name="edit_upload_failed_channel_name">Hinweise zu Bearbeitungs-Uploads</string>
+    <string name="edit_upload_failed_channel_desc">Meldet, wenn die Bearbeitung eines Fotos oder Videos in Drive nicht hochgeladen werden konnte.</string>
+    <string name="edit_upload_failed_title">Deine Bearbeitung wurde nicht hochgeladen</string>
+    <string name="edit_upload_failed_text_kept">Drive war nicht erreichbar, deshalb wurde die bearbeitete Kopie stattdessen in deiner Galerie gespeichert.</string>
+    <string name="edit_upload_failed_text_lost">Drive war nicht erreichbar und die bearbeitete Kopie konnte nicht gespeichert werden. Öffne das Original und bearbeite es erneut.</string>
     <string name="upload_status_compressing_percent">Komprimieren %1$d %%</string>
     <string name="sync_worker_notification_compressing">Video wird komprimiert (%1$d %%)</string>
     <string name="compression_badge_hardware">Hardware</string>
@@ -2123,6 +2342,39 @@
     <string name="compression_hint_hevc">H.265 ist etwa ein Drittel kleiner als H.264. iPhone, Mac und die meisten Android-Telefone spielen es ab; Proton Drive in Firefox oder in Chrome und Edge ohne Hardware-Unterstützung zeigt es eventuell nicht an.</string>
     <string name="compression_hint_av1">AV1 liefert die kleinsten Dateien. Chrome, Firefox und Edge spielen es ab; bei Apple nur iPhone 15 Pro, Macs mit M3 und neuer.</string>
     <string name="compression_hint_keep">Jedes Video behält seinen Codec; einer, den dieses Telefon nicht kodieren kann, wird zu H.264.</string>
+    <string name="compression_codec_info_title">Über Video-Codecs</string>
+    <string name="compression_codec_desc_auto">Wählt das Beste, was dieses Handy kodieren kann</string>
+    <string name="compression_codec_desc_avc">Läuft überall: ältere Handys, Fernseher und jeder Browser</string>
+    <string name="compression_codec_desc_hevc">Etwa ein Drittel kleiner als H.264; manche Browser zeigen es nicht an</string>
+    <string name="compression_codec_desc_av1">Kleinste Dateien; ältere Geräte und manche Browser spielen es nicht ab</string>
     <string name="compression_estimate">Etwa %1$s pro Minute %2$dp-Video</string>
     <string name="compression_unavailable_fallback">%1$s ist auf diesem Telefon nicht verfügbar, Videos verwenden daher %2$s.</string>
+    <!-- 2.6.0 -->
+    <string name="whats_new_260_labels_title">Foto-Labels</string>
+    <string name="whats_new_260_labels_body">Öffne ein Foto, tippe auf „Details“ und füge im Feld „Labels“ bis zu fünf Labels hinzu, oder wähle mehrere Fotos und tippe auf „Labels hinzufügen“. Die Suche findet Fotos über ihre Labels. Labels umbenennen, zusammenführen und löschen sowie in Drive sichern oder wiederherstellen kannst du unter „Einstellungen > Weitere Einstellungen > Labels“.</string>
+    <string name="whats_new_260_compress_title">Videokomprimierung</string>
+    <string name="whats_new_260_compress_body">Schalte „Videos komprimieren“ unter „Einstellungen > Sicherung &amp; Speicher > Backup-Einstellungen > Qualität und Größe“ ein und wähle Codec und Qualität. H.264 ist die Vorgabe und läuft überall. Beim Hochladen siehst du den Fortschritt und den gesparten Speicher, und deine Fotos werden weiter hochgeladen, während ein Video komprimiert wird.</string>
+    <string name="whats_new_260_vault_title">Versteckte Fotos beim Abmelden</string>
+    <string name="whats_new_260_vault_body">Beim Abmelden wirst du gefragt, was mit versteckten Fotos ohne Drive-Kopie geschehen soll; eine vom Server beendete Sitzung verschiebt sie selbst in einen Ordner deiner Galerie. Damit sie stattdessen in einer passwortgeschützten ZIP-Datei in Downloads landen, schalte „Versteckte Fotos beim Abmelden schützen“ unter „Einstellungen > Weitere Einstellungen > Datenschutz &amp; Sicherheit“ ein.</string>
+    <string name="whats_new_260_albums_title">Alben-Tab</string>
+    <string name="whats_new_260_albums_body">Alben erscheinen als Raster oder Liste und lassen sich in beiden von Hand anordnen. Mit „Aus Alben ausschließen“ im Menü eines Albums blendest du es im Raster aus und findest es im Filter „Ausgeschlossen“ wieder. Wie der Tab aussieht und sich öffnet, stellst du unter „Einstellungen > Darstellung &amp; Sprache > Bibliothek > Alben“ ein.</string>
+    <string name="whats_new_260_shortcuts_title">Kacheln und die Seite Geteilt</string>
+    <string name="whats_new_260_shortcuts_body">Der Alben-Tab beginnt mit einer Reihe Kacheln: „Sammlung“, „Ausgeblendet“, „Geteilt“, „Karte“, „Kalender“, „Personen“, „Offline“. „Geteilt“ öffnet sich als eigene Seite, mit einem Punkt, wenn eine Einladung wartet. Die Kacheln ordnest du um oder blendest sie aus unter „Einstellungen > Darstellung &amp; Sprache > Bibliothek > Alben > Verknüpfungen“.</string>
+    <string name="whats_new_260_search_title">Die Suche findet mehr</string>
+    <string name="whats_new_260_search_body">Suche nach Ort, Monat oder Jahr oder mit Wörtern wie letzte Woche, gestern oder vor 3 Tagen. Mit Komma getrennte Wörter finden Treffer für eines davon. Alben und Verknüpfungsseiten erscheinen beim Tippen, und Datums- und Kategoriefilter werden als Pillen angezeigt, die du entfernen kannst.</string>
+    <string name="whats_new_260_picker_title">Zum Album hinzufügen</string>
+    <string name="whats_new_260_picker_body">Wenn du Fotos für ein Album auswählst, öffnet sich eine Auswahl wie in der Galerie deines Telefons, mit „Suche“ als drittem Tab. Das Blatt „Zum Album hinzufügen“ bleibt offen, sodass ein Foto in mehrere Alben kann, und auch Fotos, die noch hochgeladen werden, lassen sich hinzufügen.</string>
+    <string name="whats_new_260_selection_title">Fotos auswählen</string>
+    <string name="whats_new_260_selection_body">„Teilen“, „Zum Album hinzufügen“ und „Löschen“ erscheinen als Schaltflächen direkt unter den ausgewählten Fotos, alles Weitere unter „Mehr“, und „Alle auswählen“ steht neben der Anzahl.</string>
+    <string name="whats_new_260_settings_title">Einstellungen neu gruppiert</string>
+    <string name="whats_new_260_settings_body">Die erste Seite enthält „Konto“, „Sicherung &amp; Speicher“ und die Werkzeuge. „Weitere Einstellungen“ enthält jetzt „Maschinelles Lernen“, „Labels“, „Datenschutz &amp; Sicherheit“, Berechtigungen, Benachrichtigungen und Diagnose. „Neuigkeiten“, „Häufige Fragen“ und Updates sind nach „Über“ umgezogen, und „Backup-Einstellungen“ beginnt mit „Jetzt synchronisieren“ und der Netzwerkwahl.</string>
+    <string name="whats_new_260_grouping_title">Sortieren und Gruppieren in Alben</string>
+    <string name="whats_new_260_grouping_body">Im Menü eines Albums oder Ordners sortierst und gruppierst du die Fotos nach Tag, Monat oder Jahr. Jedes merkt sich seine eigene Wahl, und mit einer Kneifgeste wechselst du zwischen Jahr, Monat und Tag. Name und Aktionen bleiben beim Scrollen in einer Kopfleiste.</string>
+    <string name="whats_new_260_details_title">Personen und Karte in den Details</string>
+    <string name="whats_new_260_details_body">Die „Details“ eines Fotos zeigen jetzt die Personen darauf und eine Karte, wo es aufgenommen wurde. Tippe auf eine Person, um ihre Seite zu öffnen, oder auf die Karte für die Vollbildansicht. Tippe auf ein unbenanntes Gesicht, um es zu benennen oder jemandem zuzuordnen.</string>
+    <string name="whats_new_260_frame_title">Rahmen-Werkzeug</string>
+    <string name="whats_new_260_frame_body">Setze im Foto-Editor ein Foto auf eine Leinwand anderer Form, etwa 1:1, 9:16 oder Polaroid, gefüllt mit einer Farbe oder einer weichen Unschärfe. Das Werkzeug ist noch in Arbeit, weitere Verbesserungen folgen.</string>
+    <string name="whats_new_260_drive_title">Gesichts- und Suchdaten in Drive</string>
+    <string name="whats_new_260_drive_body">Sichere Gesichtsnamen und Suchdaten in Drive und stelle sie auf einem anderen Telefon wieder her, wobei du wählst, was zurückkommt, unter „Einstellungen > Weitere Einstellungen > Maschinelles Lernen“.</string>
+    <string name="whats_new_260_more">Dazu bearbeitbare Daten bei HEIC, GIF und RAW, Duplikatgruppen zum Ignorieren, eine Ortsauswahl auf der Karte, Türkisch und viele weitere Korrekturen und Stabilitätsverbesserungen.</string>
 </resources>

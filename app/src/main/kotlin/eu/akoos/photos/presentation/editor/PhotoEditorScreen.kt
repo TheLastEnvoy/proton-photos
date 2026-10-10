@@ -26,6 +26,8 @@ import eu.akoos.photos.R
 import eu.akoos.photos.presentation.common.ConfirmDialog
 import eu.akoos.photos.presentation.common.ErrorPopup
 import eu.akoos.photos.presentation.editor.components.SaveOptionRow
+import eu.akoos.photos.presentation.lock.LocalAppLock
+import eu.akoos.photos.presentation.lock.runWhenOpen
 
 import android.graphics.Bitmap
 import android.graphics.PointF
@@ -61,9 +63,11 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -71,6 +75,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyRow
@@ -94,6 +99,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.FilterFrames
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Gradient
@@ -140,6 +146,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -155,12 +162,17 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
@@ -182,6 +194,7 @@ import eu.akoos.photos.presentation.theme.PillBgOpaque
 import eu.akoos.photos.presentation.theme.PillBorder
 import eu.akoos.photos.presentation.theme.pillShape
 import eu.akoos.photos.presentation.theme.TrackBg
+import eu.akoos.photos.util.FitBox
 import eu.akoos.photos.util.ImageFit
 import eu.akoos.photos.util.fitImageInBox
 import kotlin.math.hypot
@@ -194,6 +207,7 @@ private enum class Tool(@androidx.annotation.StringRes val labelRes: Int, val ic
     Filter(R.string.editor_tool_filter, Icons.Default.AutoFixHigh),
     Color(R.string.editor_tool_color, Icons.Default.Tonality),
     Crop(R.string.video_editor_crop, Icons.Default.Crop),
+    Frame(R.string.editor_tool_frame, Icons.Default.FilterFrames),
     Redact(R.string.editor_tool_redact, Icons.Default.Brush),
     HideFaces(R.string.editor_hide_faces, Icons.Default.Face),
     Draw(R.string.editor_tool_draw, Icons.Default.Draw),
@@ -288,15 +302,22 @@ fun PhotoEditorScreen(
     // Seed pendingCropRect whenever the user enters the Crop tool, and clear it when
     // they leave. Full-image bounds come from the DISPLAYED crop bitmap (rotation already
     // baked in, so width/height match the rect's display space). adjustedBitmapNoCrop may
-    // not be ready yet — handled by the LaunchedEffect re-running on it.
+    // not be ready yet, which the LaunchedEffect covers by re-running on its size.
+    // While the tool is open the rect also follows the committed crop, so an Undo or Redo shows
+    // on screen. settledCropRect is the rect last seeded, or last committed by the overlay, and
+    // only a rect still showing it is re-seeded: a frame the overlay is moving, or one a chip has
+    // just set, is never pulled back to a committed crop that has not caught up with it yet.
     val cropDisplayBitmap = state.adjustedBitmapNoCrop ?: state.originalBitmap
-    androidx.compose.runtime.LaunchedEffect(activeTool, cropDisplayBitmap) {
+    val committedCrop = state.adjustments.cropRect
+    var settledCropRect by remember { mutableStateOf<android.graphics.Rect?>(null) }
+    androidx.compose.runtime.LaunchedEffect(
+        activeTool, committedCrop, cropDisplayBitmap?.width, cropDisplayBitmap?.height,
+    ) {
         if (activeTool == Tool.Crop) {
-            val disp = cropDisplayBitmap
-            if (disp != null && pendingCropRect == null) {
-                pendingCropRect = state.adjustments.cropRect
-                    ?: android.graphics.Rect(0, 0, disp.width, disp.height)
-            }
+            val disp = cropDisplayBitmap ?: return@LaunchedEffect
+            val seed = committedCrop ?: android.graphics.Rect(0, 0, disp.width, disp.height)
+            if (pendingCropRect == null || pendingCropRect == settledCropRect) pendingCropRect = seed
+            settledCropRect = seed
         } else {
             pendingCropRect = null
         }
@@ -328,7 +349,9 @@ fun PhotoEditorScreen(
         }
     }
 
-    // System consent dialog for overwriting foreign MediaStore URIs.
+    // System consent dialog for overwriting foreign MediaStore URIs. A save can raise it after the app
+    // lock came up, and the system dialog would open above the lock, so it waits for the unlock.
+    val appLock = LocalAppLock.current
     val writePermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
@@ -337,9 +360,11 @@ fun PhotoEditorScreen(
     }
     androidx.compose.runtime.LaunchedEffect(state.pendingWriteIntent) {
         val pi = state.pendingWriteIntent ?: return@LaunchedEffect
-        writePermissionLauncher.launch(
-            androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()
-        )
+        appLock.runWhenOpen {
+            writePermissionLauncher.launch(
+                androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()
+            )
+        }
     }
 
     // OS consent dialog for deleting the original device file after a Synced + Overwrite
@@ -351,9 +376,11 @@ fun PhotoEditorScreen(
     ) { _ -> vm.onDeletePermissionResolved() }
     androidx.compose.runtime.LaunchedEffect(state.pendingDeleteIntent) {
         val pi = state.pendingDeleteIntent ?: return@LaunchedEffect
-        deletePermissionLauncher.launch(
-            androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()
-        )
+        appLock.runWhenOpen {
+            deletePermissionLauncher.launch(
+                androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build()
+            )
+        }
     }
 
     // Navigate away after a successful save. SuccessAsCopy gets a toast so the user knows
@@ -416,7 +443,9 @@ fun PhotoEditorScreen(
 
     Column(Modifier.fillMaxSize().background(Bg0).statusBarsPadding()) {
         TopBar(
-            isSaving = state.isSaving,
+            // Busy while a Hide-faces detection runs too, so a save cannot start before the covers land
+            // (the save itself also waits for one it finds in flight).
+            isSaving = state.isSaving || state.hideFacesState is HideFacesState.Detecting,
             canUndo = canUndo,
             canRedo = canRedo,
             onBack = confirmedOnBack,
@@ -500,6 +529,7 @@ fun PhotoEditorScreen(
                         val disp = cropDisplayBitmap
                         val full = disp != null && it.left == 0 && it.top == 0 &&
                             it.right == disp.width && it.bottom == disp.height
+                        settledCropRect = it
                         vm.applyCrop(if (full) null else it)
                     },
                 )
@@ -529,15 +559,36 @@ fun PhotoEditorScreen(
                         if (id != null) vm.commitTextEdit(id)
                     },
                 )
-                state.previewBitmap != null -> ImageWithRedactOverlay(
-                    bitmap = state.previewBitmap!!,
-                    redactActive = activeTool == Tool.Redact,
-                    brushDp = state.redactBrushDp,
-                    committedStrokeCount = state.adjustments.redactStrokes.size,
-                    drawStrokes = state.adjustments.drawStrokes,
-                    textItems = state.adjustments.textItems,
-                    onStrokeFinished = { stroke -> vm.addRedactStroke(stroke) },
-                )
+                activeTool == Tool.Frame && state.previewBitmap != null -> {
+                    val photo = framePhotoSize(state)
+                    FramePreview(
+                        bitmap = state.previewBitmap!!,
+                        frame = state.adjustments.frame,
+                        photoW = photo.width,
+                        photoH = photo.height,
+                        drawStrokes = state.adjustments.drawStrokes,
+                        textItems = state.adjustments.textItems,
+                        onFrameLive = { vm.setFrameLive(it) },
+                        onFrameCommit = { vm.finalizeAdjustments() },
+                    )
+                }
+                state.previewBitmap != null -> {
+                    // The preview and the edit it shows land together, so a stroke drawn on this bitmap maps
+                    // through this edit's frame and crop onto the photo.
+                    val shown = state.previewBitmap!!
+                    val shownEdit = state.previewAdjustments
+                    ImageWithRedactOverlay(
+                        bitmap = shown,
+                        redactActive = activeTool == Tool.Redact,
+                        brushDp = state.redactBrushDp,
+                        bakedStrokes = shownEdit.redactStrokes,
+                        drawStrokes = state.adjustments.drawStrokes,
+                        textItems = state.adjustments.textItems,
+                        onStrokeFinished = { stroke ->
+                            vm.addRedactStroke(stroke, shown.width, shown.height, shownEdit)
+                        },
+                    )
+                }
             }
             // While the preview is held, the untouched original is drawn over the top with a label,
             // so the user can compare against everything applied so far.
@@ -572,7 +623,10 @@ fun PhotoEditorScreen(
                 .fillMaxWidth()
                 // Keep the system back / edge-swipe gesture out of the control area: dragging an adjustment
                 // slider or a crop handle that starts near the screen edge must not turn into a back nav.
-                .systemGestureExclusion()
+                // The Frame tool keeps only its tool row out (below): the system honours 200dp of these per
+                // screen edge, lowest first, and this whole area would leave none for a drag on the framed
+                // photo. Its own panel is chips and swatches, with no slider to guard.
+                .then(if (activeTool == Tool.Frame) Modifier else Modifier.systemGestureExclusion())
                 .navigationBarsPadding()
                 .padding(bottom = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -612,6 +666,7 @@ fun PhotoEditorScreen(
                         onLockedAspectChange = { lockedAspect = it },
                         onPendingCropRectChange = { pendingCropRect = it },
                     )
+                    Tool.Frame -> FramePanel(state, vm)
                     Tool.Redact -> RedactPanel(state, vm)
                     Tool.HideFaces -> HideFacesPanel(state, vm)
                     Tool.Draw -> DrawPanel(
@@ -653,6 +708,8 @@ fun PhotoEditorScreen(
             // circles squashing together; padding keeps the first/last tab clear of the pill ends.
             Row(
                 modifier = Modifier
+                    // An exclusion of its own, so the row keeps it while the Frame tool lifts the one above.
+                    .systemGestureExclusion()
                     .padding(horizontal = 18.dp)
                     .fillMaxWidth()
                     .background(PillBgOpaque, pillShape)
@@ -687,8 +744,9 @@ fun PhotoEditorScreen(
     // A blocking save failure flagged for the dialog (a cloud edit attempted with no internet). Shown
     // as the app's own bottom-sheet dialog rather than inline text; dismissing clears the result and
     // leaves the editor open with the edit intact, so the user can reconnect and save again, or discard.
+    // It is a window of its own, so under the app lock it waits, the result kept, and shows on the unlock.
     val failedResult = (state.saveResult as? SaveResult.Failed)?.takeIf { it.asDialog }
-    if (failedResult != null) {
+    if (failedResult != null && !appLock.isLocked) {
         ConfirmDialog(
             title = stringResource(R.string.editor_save_failed),
             message = failedResult.message,
@@ -701,8 +759,8 @@ fun PhotoEditorScreen(
 
     // Raised by the Detect-faces action itself, so it answers something the user just asked for rather
     // than interrupting. Accepting persists consent and re-runs detection; the failure case is shown
-    // inline in the panel instead.
-    if (state.hideFacesState is HideFacesState.NeedsConsent) {
+    // inline in the panel instead. Held back under the app lock like the save failure above.
+    if (state.hideFacesState is HideFacesState.NeedsConsent && !appLock.isLocked) {
         ConfirmDialog(
             title = stringResource(R.string.editor_face_model_title),
             message = stringResource(R.string.editor_face_model_body),
@@ -1008,18 +1066,18 @@ private fun ImageWithRedactOverlay(
     bitmap: Bitmap,
     redactActive: Boolean,
     brushDp: Float,
-    committedStrokeCount: Int,
+    bakedStrokes: List<RedactionStroke>,
     drawStrokes: List<DrawStroke>,
     textItems: List<TextItem>,
     onStrokeFinished: (RedactionStroke) -> Unit,
 ) {
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var currentStrokeCanvas by remember { mutableStateOf<List<Offset>>(emptyList()) }
-    // Keep the in-progress stroke drawn until its committed copy has baked into the bitmap (the stroke
-    // count grows), so the mark never blinks out in the gap while the re-render is still in flight. The
-    // drag guard stops a fast next stroke being wiped by the previous one's bake landing mid-draw.
+    // Keep the in-progress stroke drawn until a preview baking it lands (the strokes baked into the
+    // bitmap change), so the mark never blinks out in the gap while the re-render is still in flight.
+    // The drag guard stops a fast next stroke being wiped by the previous one's bake landing mid-draw.
     var isDragging by remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(committedStrokeCount) {
+    androidx.compose.runtime.LaunchedEffect(bakedStrokes) {
         if (!isDragging) currentStrokeCanvas = emptyList()
     }
     val density = LocalDensity.current
@@ -1425,6 +1483,195 @@ private fun TextOverlay(
     }
 }
 
+/**
+ * The preview while the Frame tool is open: the framed photo with the pen and text layer over it. With a frame on,
+ * a pinch resizes the photo inside it and a drag moves it, both measured from where the gesture began
+ * ([afterPreviewGesture]). Near the middle of the frame the photo snaps onto it ([snappedToCentre]) with a light
+ * tick, and a guide line crosses the frame on that axis while the finger stays down. Each move renders live
+ * through [onFrameLive], and the gesture ends in one commit through [onFrameCommit]; a touch that moved nothing
+ * commits nothing.
+ */
+@Composable
+private fun FramePreview(
+    bitmap: Bitmap,
+    frame: FrameSpec?,
+    photoW: Int,
+    photoH: Int,
+    drawStrokes: List<DrawStroke>,
+    textItems: List<TextItem>,
+    onFrameLive: (FrameSpec) -> Unit,
+    onFrameCommit: () -> Unit,
+) {
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    // The axes a gesture holds the photo snapped on, across and down, for the guide lines.
+    var guideX by remember { mutableStateOf(false) }
+    var guideY by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    val guideColor = Accent
+    Box(
+        modifier = Modifier.fillMaxSize().onSizeChanged { containerSize = it },
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit,
+        )
+        val fit = remember(bitmap.width, bitmap.height, containerSize) {
+            fitImageInBox(bitmap.width.toFloat(), bitmap.height.toFloat(),
+                containerSize.width.toFloat().coerceAtLeast(1f), containerSize.height.toFloat().coerceAtLeast(1f))
+        }
+        // The pen + text overlays live here as a Compose layer (they are stripped from the baked preview).
+        if (drawStrokes.isNotEmpty() || textItems.isNotEmpty()) {
+            Canvas(Modifier.fillMaxSize()) {
+                paintEditorOverlays(drawStrokes, textItems, bitmap, fit)
+            }
+        }
+        if (frame != null && containerSize.width > 0 && containerSize.height > 0) {
+            // Where the photo shows, through the full-size canvas fitted to the preview: the same measure the
+            // gesture turns a drag with, which a render still in flight cannot skew.
+            val layout = frameCanvas(photoW, photoH, frame)
+            val canvasFit = fitImageInBox(
+                layout.width.toFloat(), layout.height.toFloat(),
+                containerSize.width.toFloat(), containerSize.height.toFloat(),
+            )
+            val photo = layout.photo
+            val photoOnScreen = canvasFit.toScreen(FitBox(photo.left, photo.top, photo.right, photo.bottom))
+            FrameGestureExclusions(photo = photoOnScreen, containerWidthPx = containerSize.width.toFloat())
+            if (guideX || guideY) {
+                val edges = canvasFit.toScreen(FitBox(0f, 0f, layout.width.toFloat(), layout.height.toFloat()))
+                // Through the photo's centre, which the snap has put on the frame's middle, edge to edge of the frame.
+                Canvas(Modifier.fillMaxSize()) {
+                    val hairline = 1.dp.toPx()
+                    val cx = (photoOnScreen.left + photoOnScreen.right) / 2f
+                    val cy = (photoOnScreen.top + photoOnScreen.bottom) / 2f
+                    if (guideX) drawLine(guideColor, Offset(cx, edges.top), Offset(cx, edges.bottom), hairline)
+                    if (guideY) drawLine(guideColor, Offset(edges.left, cy), Offset(edges.right, cy), hairline)
+                }
+            }
+            // The loop outlives recomposition, and every tick commits a new frame, so it reads the frame and the
+            // callbacks through these instead of restarting on them.
+            val frameState = androidx.compose.runtime.rememberUpdatedState(frame)
+            val onLiveState = androidx.compose.runtime.rememberUpdatedState(onFrameLive)
+            val onCommitState = androidx.compose.runtime.rememberUpdatedState(onFrameCommit)
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    // Keyed on the photo's size alone, which only a crop or a turn changes, so the preview
+                    // re-rendering under a gesture never restarts it.
+                    .pointerInput(photoW, photoH) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            val start = frameState.value
+                            val slopPx = viewConfiguration.touchSlop
+                            val snapPx = FRAME_SNAP_DP.dp.toPx()
+                            // A photo that starts on the middle, or with no room yet to leave it, counts as
+                            // snapped already, so only a snap the gesture makes ticks.
+                            val startSnap = start.snappedToCentre(photoW, photoH, size.width, size.height, snapPx)
+                            var snappedX = start.offsetX == 0f || startSnap.snappedX
+                            var snappedY = start.offsetY == 0f || startSnap.snappedY
+                            var zoom = 1f
+                            var pan = Offset.Zero
+                            var engaged = false
+                            var shown = start
+                            var live = false
+                            try {
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val pressed = event.changes.filter { it.pressed }
+                                    // Both count only the fingers down on either side of this event, so a
+                                    // finger landing or lifting adds no step.
+                                    val step = event.calculateZoom()
+                                    if (step.isFinite() && step > 0f) zoom *= step
+                                    pan += event.calculatePan()
+                                    // A second finger makes a pinch at once; a lone finger takes the photo once
+                                    // it is past the slop, and the photo catches up with it.
+                                    if (!engaged) engaged = pressed.size >= 2 || pan.getDistance() > slopPx
+                                    if (engaged) {
+                                        val snap = start
+                                            .afterPreviewGesture(
+                                                zoom, pan.x, pan.y, photoW, photoH, size.width, size.height,
+                                            )
+                                            .snappedToCentre(photoW, photoH, size.width, size.height, snapPx)
+                                        if ((snap.snappedX && !snappedX) || (snap.snappedY && !snappedY)) {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                        snappedX = snap.snappedX
+                                        snappedY = snap.snappedY
+                                        guideX = snappedX
+                                        guideY = snappedY
+                                        val next = snap.spec
+                                        if (next != shown) {
+                                            onLiveState.value(next)
+                                            shown = next
+                                            live = true
+                                        }
+                                        pressed.forEach { it.consume() }
+                                    }
+                                } while (pressed.isNotEmpty())
+                            } finally {
+                                guideX = false
+                                guideY = false
+                                // Also when the tool closes under the fingers, so the live frames always end in
+                                // one undo entry and a full render.
+                                if (live) onCommitState.value()
+                            }
+                        }
+                    },
+            )
+        }
+    }
+}
+
+/**
+ * Asks the system to hold back its edge gesture beside the sides of the framed [photo] that sit in its edge strips,
+ * so a drag that starts on the photo's edge moves the photo; [frameGestureExclusions] decides where. Built like
+ * [CropGestureExclusions]: boxes that draw nothing and take no touch, placed by a layout offset so every move of
+ * the photo refreshes them.
+ */
+@Composable
+private fun BoxScope.FrameGestureExclusions(photo: FitBox, containerWidthPx: Float) {
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val gestureInsets = WindowInsets.systemGestures
+    val rects = frameGestureExclusions(
+        photo = photo,
+        containerWidthPx = containerWidthPx,
+        leftInsetPx = gestureInsets.getLeft(density, layoutDirection).toFloat(),
+        rightInsetPx = gestureInsets.getRight(density, layoutDirection).toFloat(),
+        maxHeightPx = with(density) { SYSTEM_GESTURE_EXCLUSION_BUDGET_DP.dp.toPx() },
+    )
+    for (r in rects) {
+        Box(
+            Modifier
+                .align(Alignment.TopStart)
+                .offset(
+                    x = with(density) { r.left.toDp() },
+                    y = with(density) { r.top.toDp() },
+                )
+                .size(
+                    width = with(density) { (r.right - r.left).toDp() },
+                    height = with(density) { (r.bottom - r.top).toDp() },
+                )
+                .systemGestureExclusion(),
+        )
+    }
+}
+
+/**
+ * The photo's full-resolution size before its frame, as the render cuts it: the crop, or else the whole image
+ * turned by the edit's quarter turns. A frame's canvas is measured on it for a pinch, a drag or a ratio pick. Read
+ * from the original rather than a rendered bitmap, so it never trails a render still in flight.
+ */
+private fun framePhotoSize(state: EditorUiState): IntSize {
+    val crop = state.adjustments.cropRect
+    if (crop != null) return IntSize(crop.width(), crop.height())
+    val orig = state.originalBitmap ?: return IntSize.Zero
+    return if (state.adjustments.rotationDegrees % 180 != 0) IntSize(orig.height, orig.width)
+    else IntSize(orig.width, orig.height)
+}
+
 // ─── Tool panels ────────────────────────────────────────────────────────────
 
 /** Adjust tab: the video editor's Adjust recipe adapted to the 13 photo adjustments. A horizontally
@@ -1735,29 +1982,21 @@ private fun HideFacesPanel(state: EditorUiState, vm: PhotoEditorViewModel) {
             )
         }
 
-        // Status line: spinner while a detect is in flight, then the face count, the not-found note, or
-        // an inline failure message.
-        when (hf) {
-            is HideFacesState.Detecting ->
+        // Status line: spinner while a detect is in flight, then the count of covers the edit carries,
+        // the not-found note, or an inline failure message.
+        when (val status = hideFacesStatus(hf, state.adjustments.faceCovers.size)) {
+            HideFacesStatus.Busy ->
                 CircularProgressIndicator(color = Accent, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-            is HideFacesState.Ready ->
+            is HideFacesStatus.Covered ->
                 Text(
-                    if (hf.faceCount > 0)
-                        pluralStringResource(R.plurals.editor_hide_faces_count, hf.faceCount, hf.faceCount)
-                    else stringResource(R.string.editor_hide_faces_none),
+                    pluralStringResource(R.plurals.editor_hide_faces_count, status.count, status.count),
                     color = FgMute, fontSize = 12.sp,
                 )
-            is HideFacesState.Failed ->
-                Text(hf.message, color = Color(0xFFFF3B30), fontSize = 12.sp)
-            else ->
-                if (hasCovers) Text(
-                    pluralStringResource(
-                        R.plurals.editor_hide_faces_count,
-                        state.adjustments.faceCovers.size,
-                        state.adjustments.faceCovers.size,
-                    ),
-                    color = FgMute, fontSize = 12.sp,
-                )
+            HideFacesStatus.NoFaces ->
+                Text(stringResource(R.string.editor_hide_faces_none), color = FgMute, fontSize = 12.sp)
+            is HideFacesStatus.Failed ->
+                Text(status.message, color = Color(0xFFFF3B30), fontSize = 12.sp)
+            HideFacesStatus.None -> Unit
         }
 
         Row(
@@ -2020,6 +2259,144 @@ private fun TextPanel(
                 )
             }
         }
+    }
+}
+
+/**
+ * The Frame tool: a row of shapes over a row of fills, then the hint for the pinch and drag on the preview. Off takes
+ * the frame away, and any other shape puts the photo back in the middle behind an even border, in the fill already
+ * on or white for a first frame. The fills stay dimmed until there is a frame to fill. What is lit is read back from
+ * the frame itself, so it follows an undo, and every pick is one undo entry.
+ */
+@Composable
+private fun FramePanel(state: EditorUiState, vm: PhotoEditorViewModel) {
+    val frame = state.adjustments.frame
+    val shape = frameShapeOf(frame)
+    val fills = remember { frameFills(DRAW_COLORS) }
+    val blurSource = state.adjustedBitmapNoCrop ?: state.originalBitmap
+    val blurLook = remember(blurSource) { frameBlurLook(blurSource) }
+    val blurLabel = stringResource(R.string.collage_bg_blur)
+    val idle = if (frame == null) Modifier.alpha(0.38f) else Modifier
+    // A pick that lands on the frame already on changes nothing, so it spends no render.
+    val pick: (FrameSpec?) -> Unit = { next -> if (next != frame) vm.setFrame(next) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            items(FrameShape.entries) { s ->
+                FrameChip(
+                    label = when (s) {
+                        FrameShape.Off -> stringResource(R.string.editor_frame_none)
+                        FrameShape.Original -> stringResource(R.string.editor_filter_original)
+                        FrameShape.Polaroid -> stringResource(R.string.editor_frame_polaroid)
+                        // Numeric ratios stay as glyph labels.
+                        else -> s.ratio?.label.orEmpty()
+                    },
+                    selected = s == shape,
+                    onClick = { pick(frame.withShape(s)) },
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().then(idle).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            fills.forEach { fill ->
+                FrameSwatch(
+                    fill = fill,
+                    selected = frame?.fill == fill,
+                    enabled = frame != null,
+                    blurLook = blurLook,
+                    blurLabel = blurLabel,
+                    onClick = { pick(frame.withFill(fill)) },
+                )
+            }
+        }
+        Text(stringResource(R.string.editor_frame_hint), color = FgMute, fontSize = 12.sp, modifier = idle)
+    }
+}
+
+/**
+ * One fill swatch, round like the Draw tool's colours and lit the same way, with an accent ring. The blur shows
+ * [blurLook], the photo blurred and dimmed as that fill draws it, and is the one swatch with a name to read out.
+ */
+@Composable
+private fun FrameSwatch(
+    fill: FrameFill,
+    selected: Boolean,
+    enabled: Boolean,
+    blurLook: ImageBitmap?,
+    blurLabel: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .then(
+                when (fill) {
+                    is FrameFill.Solid -> Modifier.background(Color(fill.argb))
+                    FrameFill.Blur -> Modifier.background(FgMute).semantics { contentDescription = blurLabel }
+                },
+            )
+            .border(if (selected) 2.dp else 0.5.dp, if (selected) Accent else PillBorder, CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+    ) {
+        if (fill == FrameFill.Blur) {
+            if (blurLook != null) {
+                Image(
+                    bitmap = blurLook,
+                    contentDescription = null,
+                    modifier = Modifier.matchParentSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Box(Modifier.matchParentSize().background(Color(FRAME_BLUR_SCRIM)))
+        }
+    }
+}
+
+/**
+ * The Blur swatch's picture: [source] shrunk to a few pixels and softened the way the fill softens the photo, for
+ * the swatch to show round. Null while there is no photo, or none that can still be read.
+ */
+private fun frameBlurLook(source: Bitmap?): ImageBitmap? {
+    if (source == null || source.isRecycled || source.width <= 0 || source.height <= 0) return null
+    val k = FRAME_SWATCH_BLUR_PX / minOf(source.width, source.height).toFloat()
+    val w = (source.width * k).roundToInt().coerceIn(1, 4 * FRAME_SWATCH_BLUR_PX)
+    val h = (source.height * k).roundToInt().coerceIn(1, 4 * FRAME_SWATCH_BLUR_PX)
+    return runCatching {
+        val small = shrinkAveraged(source, w, h)
+        val pixels = IntArray(w * h)
+        small.getPixels(pixels, 0, w, 0, 0, w, h)
+        if (small !== source) small.recycle()
+        Bitmap.createBitmap(softenArgb(pixels, w, h, 1, FRAME_BLUR_PASSES), w, h, Bitmap.Config.ARGB_8888)
+            .asImageBitmap()
+    }.getOrNull()
+}
+
+/** Pixels across the short side of the Blur swatch's picture: few enough that a 28dp circle shows it soft. */
+private const val FRAME_SWATCH_BLUR_PX = 12
+
+/** One Frame chip, in the crop panel's ratio chip recipe: an accent fill and label while lit, a hairline border
+ *  otherwise. */
+@Composable
+private fun FrameChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(38.dp)
+            .clip(pillShape)
+            .background(if (selected) Accent.copy(alpha = 0.18f) else PillBg, pillShape)
+            .then(if (!selected) Modifier.border(0.5.dp, PillBorder, pillShape) else Modifier)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (selected) Accent else FgPrimary,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+        )
     }
 }
 

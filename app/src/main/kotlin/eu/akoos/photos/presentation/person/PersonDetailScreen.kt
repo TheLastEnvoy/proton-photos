@@ -78,6 +78,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import eu.akoos.photos.R
 import eu.akoos.photos.domain.entity.GalleryItem
+import eu.akoos.photos.presentation.common.rememberAddLabelsAction
 import eu.akoos.photos.presentation.common.ConfirmDialog
 import eu.akoos.photos.presentation.common.EditFieldSheet
 import eu.akoos.photos.presentation.common.IconBubble
@@ -87,7 +88,10 @@ import eu.akoos.photos.presentation.gallery.PersonTile
 import eu.akoos.photos.presentation.gallery.PersonUi
 import eu.akoos.photos.presentation.gallery.PhotoCell
 import eu.akoos.photos.presentation.gallery.photoCellInputsFor
+import eu.akoos.photos.presentation.people.NameOrMergeSheet
+import eu.akoos.photos.presentation.people.NameOrMergeSubject
 import eu.akoos.photos.presentation.people.PersonPickerSheet
+import eu.akoos.photos.presentation.people.rememberGroupSubject
 import eu.akoos.photos.presentation.common.FloatingHeader
 import eu.akoos.photos.presentation.theme.Accent
 import eu.akoos.photos.presentation.theme.AppColors
@@ -96,10 +100,11 @@ import eu.akoos.photos.presentation.theme.FgMute
 /**
  * Full-screen detail for one clustered person: a photo grid over every item they appear in, built
  * from the same [PhotoCell] + [photoCellInputsFor] path the other detail grids use, so a tap opens
- * the viewer with the right synced / cloud state. The floating pill header carries a back button, an
- * add action (once the person is named) that opens a picker to attach missing photos, and an edit
- * action that renames the person. Long-pressing a photo enters selection, where the header switches to
- * a count and a remove action that takes the picked photos off this person for good.
+ * the viewer with the right synced / cloud state. The floating pill header carries a back button and
+ * an overflow menu: a named person is renamed, merged, or given more photos there, and an unnamed group
+ * is named or merged into someone through the shared [NameOrMergeSheet], the same sheet every other
+ * surface opens for it. Long-pressing a photo enters selection, where the header switches to a count
+ * and a remove action that takes the picked photos off this person for good.
  */
 @Composable
 fun PersonDetailScreen(
@@ -125,6 +130,9 @@ fun PersonDetailScreen(
     /** Opens the suggested candidate's own grid, so the user can look past the tiny face crop before
      *  deciding merge vs. different person. */
     onPreviewCandidate: (Long) -> Unit = {},
+    /** Leaves this page once its unnamed group was merged into the person with the given id, so that
+     *  person's page takes its place. */
+    onMergedInto: (Long) -> Unit = {},
     /** Opens the sweep that looks for more photos of this person among the ones no face was found on. */
     onFindMore: () -> Unit = {},
 ) {
@@ -145,6 +153,7 @@ fun PersonDetailScreen(
     var showNotPersonConfirm by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var showMergePicker by remember { mutableStateOf(false) }
+    var showNameOrMerge by remember { mutableStateOf(false) }
     var showMoveSelectionPicker by remember { mutableStateOf(false) }
     var pendingCover by remember { mutableStateOf<String?>(null) }
     var pendingMerge by remember { mutableStateOf<PersonUi?>(null) }
@@ -162,17 +171,17 @@ fun PersonDetailScreen(
     // Curation can empty a person: its last photos moved to someone else, removed, or marked not a
     // person, and the Unsorted bucket empties the same way once every face is placed. An emptied grid
     // is a dead end once photos have shown, so hand back to the caller's back target the moment it goes
-    // empty. A person still loading or opened already empty never pops.
+    // empty. A person still loading or opened already empty never pops, and neither does a page that one
+    // of its own actions is already taking away, or that the name-or-merge sheet is open over.
     var hadPhotos by remember { mutableStateOf(false) }
-    var leftOnEmpty by remember { mutableStateOf(false) }
+    var leaving by remember { mutableStateOf(false) }
     // Load the other named people up front (not only when a picker opens), so renaming this person onto
     // an existing name can be recognised as a merge and confirmed rather than folding the two silently.
     LaunchedEffect(Unit) { onLoadMergeCandidates() }
-    LaunchedEffect(state.isLoading, state.items.isEmpty()) {
-        if (state.items.isNotEmpty()) {
-            hadPhotos = true
-        } else if (hadPhotos && !state.isLoading && !leftOnEmpty) {
-            leftOnEmpty = true
+    LaunchedEffect(state.isLoading, state.items.isEmpty(), showNameOrMerge) {
+        if (state.items.isNotEmpty()) hadPhotos = true
+        if (leavesEmptiedPage(state.items.isEmpty(), hadPhotos, state.isLoading, leaving, showNameOrMerge)) {
+            leaving = true
             onBack()
         }
     }
@@ -181,6 +190,14 @@ fun PersonDetailScreen(
 
     // Bulk actions for the current photo selection. They ride in the top header while selecting (the same
     // place the review list puts its whole-cluster actions), instead of a separate bottom bar.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val addLabelsAction = rememberAddLabelsAction(
+        items = remember(state.items, selection) { state.items.filter { it.stableId in selection } },
+        onDone = { msg ->
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+            selection = emptySet()
+        },
+    )
     val personSelectionActions = buildList {
         // Choosing a cover needs exactly one photo picked AND a named person (the cover is stored against
         // the name); an unnamed cluster has nowhere to keep it.
@@ -206,6 +223,7 @@ fun PersonDetailScreen(
                 },
             ),
         )
+        addLabelsAction?.let(::add)
         // Removing photos only makes sense for a named person; an unnamed cluster has no person to keep
         // the photos off of.
         if (state.personName != null) {
@@ -236,7 +254,9 @@ fun PersonDetailScreen(
             .background(appColors.pageBg),
     ) {
         when {
-            state.isLoading -> CircularProgressIndicator(
+            // An action taking the page away empties the grid before the page leaves; until then it
+            // reads as working rather than as a person with no photos.
+            state.isLoading || (leaving && state.items.isEmpty()) -> CircularProgressIndicator(
                 color = Accent,
                 modifier = Modifier.align(Alignment.Center),
             )
@@ -383,7 +403,9 @@ fun PersonDetailScreen(
                                 containerColor = appColors.cardBg,
                                 border = BorderStroke(0.5.dp, appColors.pillBorder),
                             ) {
-                                // Name an unnamed cluster, or rename a named person, through one item.
+                                // Renames a named person. For an unnamed group it is the one entry that
+                                // names it or merges it into someone: the name-or-merge sheet, the same
+                                // one every other surface opens for a nameless group.
                                 DropdownMenuItem(
                                     text = {
                                         Text(
@@ -404,7 +426,13 @@ fun PersonDetailScreen(
                                     },
                                     onClick = {
                                         menuOpen = false
-                                        showRename = true
+                                        if (state.personName == null) {
+                                            // Re-reads the group's face tile, the face the sheet shows.
+                                            onLoadMergeCandidates()
+                                            showNameOrMerge = state.personId != null
+                                        } else {
+                                            showRename = true
+                                        }
                                     },
                                 )
                                 // Add photos: named only, since a manual add is stored against the name so
@@ -453,26 +481,29 @@ fun PersonDetailScreen(
                                         },
                                     )
                                 }
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            stringResource(R.string.person_merge),
-                                            color = appColors.fgPrimary,
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.CallMerge,
-                                            contentDescription = null,
-                                            tint = appColors.fgDim,
-                                        )
-                                    },
-                                    onClick = {
-                                        menuOpen = false
-                                        onLoadMergeCandidates()
-                                        showMergePicker = true
-                                    },
-                                )
+                                // Named only: an unnamed group merges through the name-or-merge sheet.
+                                if (state.personName != null) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                stringResource(R.string.person_merge),
+                                                color = appColors.fgPrimary,
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.CallMerge,
+                                                contentDescription = null,
+                                                tint = appColors.fgDim,
+                                            )
+                                        },
+                                        onClick = {
+                                            menuOpen = false
+                                            onLoadMergeCandidates()
+                                            showMergePicker = true
+                                        },
+                                    )
+                                }
                                 // Only for an unnamed cluster: dismissing a whole named, confirmed person
                                 // as "not a person" makes no sense. A named person's stray photos are
                                 // taken off through "Remove from this person" in selection mode instead.
@@ -580,6 +611,37 @@ fun PersonDetailScreen(
         )
     }
 
+    // An unnamed group is named, or merged into someone, through the shared sheet. It asks about the
+    // group's face as the people lists draw it (a person glyph until that is read) with the photo count
+    // the header shows. "See photos" just closes it, since this page is those photos. A new name keeps
+    // the group's id and the page follows it in place; a merge leaves no group behind, so the person it
+    // joined takes this page's place.
+    val groupId = state.personId
+    if (showNameOrMerge && groupId != null) {
+        val tile = state.tile
+        val subject = if (tile != null) {
+            rememberGroupSubject(tile.copy(faceCount = state.items.size))
+        } else {
+            NameOrMergeSubject.Group(
+                personId = groupId,
+                photoCount = state.items.size,
+                coverSource = null,
+                faceBox = null,
+            )
+        }
+        NameOrMergeSheet(
+            subject = subject,
+            onDismiss = { showNameOrMerge = false },
+            onDone = { resultId ->
+                val mergedInto = pageAfterGroupNamed(groupId, resultId)
+                if (mergedInto != null && !leaving) {
+                    leaving = true
+                    onMergedInto(mergedInto)
+                }
+            },
+        )
+    }
+
     // Move a selection onto another person: pick an existing name to reassign those faces, or type a
     // new name to split them off into a new person.
     if (showMoveSelectionPicker) {
@@ -621,6 +683,9 @@ fun PersonDetailScreen(
             confirmLabel = stringResource(R.string.person_merge_confirm),
             dismissLabel = stringResource(R.string.cancel),
             onConfirm = {
+                // The merge empties this grid and then leaves the page by itself, so the emptied grid
+                // must not leave it a second time.
+                leaving = true
                 onRename(name)
                 pendingRenameMerge = null
             },
@@ -652,6 +717,9 @@ fun PersonDetailScreen(
             destructive = true,
             onConfirm = {
                 showIgnoreConfirm = false
+                // Dismissing the group empties this grid and then leaves the page by itself once the
+                // whole dismissal is written, so the emptied grid must not leave it first.
+                leaving = true
                 onIgnorePerson()
             },
             onDismiss = { showIgnoreConfirm = false },
@@ -783,3 +851,33 @@ private fun BannerAction(
             .padding(horizontal = 12.dp, vertical = 10.dp),
     )
 }
+
+/**
+ * Whether the page hands back to its caller because its grid is empty: only once photos have shown and
+ * the load has settled, and not when the page is [leaving] already through an action that navigates
+ * away by itself, nor while the name-or-merge sheet is open over it ([sheetOpen]), whose merge empties
+ * the grid on the way to opening the person the group joined.
+ */
+internal fun leavesEmptiedPage(
+    isEmpty: Boolean,
+    hadPhotos: Boolean,
+    isLoading: Boolean,
+    leaving: Boolean,
+    sheetOpen: Boolean,
+): Boolean = isEmpty && hadPhotos && !isLoading && !leaving && !sheetOpen
+
+/**
+ * The person whose page replaces this one once the name-or-merge sheet has placed the page's group
+ * ([pagePersonId]) with [resultPersonId]: that person when the group was merged into them, or null when
+ * the group kept its own id (it was only named), so the page stays.
+ */
+internal fun pageAfterGroupNamed(pagePersonId: Long, resultPersonId: Long): Long? =
+    resultPersonId.takeIf { it >= 0L && it != pagePersonId }
+
+/**
+ * Whether a group's page, left for the person it was merged into ([targetPersonId]), opens that person's
+ * page: not when the page it goes back to is theirs already ([revealedPersonId], null when that page is
+ * not a person's), as when the group was opened from that person's merge suggestion.
+ */
+internal fun opensMergedPerson(revealedPersonId: Long?, targetPersonId: Long): Boolean =
+    revealedPersonId != targetPersonId

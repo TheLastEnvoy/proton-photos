@@ -31,13 +31,19 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.launch
 import me.proton.core.accountmanager.domain.AccountManager
 import eu.akoos.photos.R
@@ -54,19 +60,23 @@ import eu.akoos.photos.data.db.entity.PhotoLocationEntity
 import eu.akoos.photos.data.preferences.SettingsKeys
 import eu.akoos.photos.data.preferences.settingsDataStore
 import eu.akoos.photos.domain.entity.GalleryItem
-import eu.akoos.photos.domain.usecase.FACE_EMBEDDING_DIM
 import eu.akoos.photos.domain.usecase.FACE_SUGGEST_THRESHOLD
 import eu.akoos.photos.domain.usecase.MIN_FACES_TO_SHOW_PERSON
 import eu.akoos.photos.domain.usecase.GetGalleryItemsUseCase
 import eu.akoos.photos.domain.usecase.ObservePeopleUseCase
+import eu.akoos.photos.domain.usecase.PersonCentroids
 import eu.akoos.photos.domain.usecase.cosineSimilarity
+import eu.akoos.photos.domain.usecase.rankSuggestionCandidates
 import eu.akoos.photos.domain.usecase.unpackEmbedding
 import eu.akoos.photos.presentation.gallery.PersonUi
 import eu.akoos.photos.presentation.gallery.toPersonUi
 import javax.inject.Inject
-import kotlin.math.sqrt
+
+private const val TAG = "PersonDetailVM"
 
 data class PersonDetailUiState(
+    /** The person the page shows, set as soon as it starts loading. */
+    val personId: Long? = null,
     /** The person's given name, or null while none is set (the screen shows a fallback then). */
     val personName: String? = null,
     val isLoading: Boolean = true,
@@ -74,6 +84,9 @@ data class PersonDetailUiState(
     /** True for the single "Unsorted" bucket, so the screen labels it, explains it, and offers only
      *  curation (move a real person out, mark the rest not a person) rather than naming the whole pile. */
     val isOther: Boolean = false,
+    /** The person's face tile as the people lists draw it, the face the name-or-merge sheet shows; null
+     *  until the people list is read, or while the person has no live cover. */
+    val tile: PersonUi? = null,
 )
 
 /**
@@ -100,6 +113,7 @@ class PersonDetailViewModel @Inject constructor(
     private val assignPersonName: eu.akoos.photos.domain.usecase.AssignPersonNameUseCase,
     private val faceIndexingScheduler: eu.akoos.photos.data.face.FaceIndexingScheduler,
     private val hideSimilarFaces: eu.akoos.photos.domain.usecase.HideSimilarFacesUseCase,
+    private val personCentroids: PersonCentroids,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -132,12 +146,13 @@ class PersonDetailViewModel @Inject constructor(
     /**
      * Observe the person's photos: the faces they appear in (minus removed ones) unioned with any
      * manually attached photos, each resolved to a [GalleryItem] newest-first. Keyed on the person id
-     * so re-entering a different person reloads cleanly, and re-run after a rename so manual adds keyed
-     * on the new name are picked up.
+     * so re-entering a different person reloads cleanly. The person's own row is followed too, so a
+     * name given while the page is open (the name-or-merge sheet over it, or a rename) retitles the
+     * page and re-reads the photos attached under that name.
      */
     fun load(personId: Long) {
         loadJob?.cancel()
-        _uiState.update { it.copy(isLoading = true) }
+        _uiState.update { it.copy(personId = personId, isLoading = true) }
         loadJob = viewModelScope.launch {
             try {
                 val userId = accountManager.getPrimaryUserId().first()
@@ -149,23 +164,29 @@ class PersonDetailViewModel @Inject constructor(
                     _uiState.update { it.copy(isLoading = false, items = emptyList()) }
                     return@launch
                 }
-                val person = personDao.personById(personId)
-                val name = person?.displayName
-                _uiState.update { it.copy(personName = name, isOther = person?.isOther == true) }
+                val library = if (userId == null) getGalleryItems.invokeLocalOnly() else getGalleryItems.invoke(userId)
+                var wasNamed: Boolean? = null
+                observeIdentity(account, personId).collectLatest { identity ->
+                    val name = identity.name
+                    _uiState.update { it.copy(personName = name, isOther = identity.isOther) }
+                    // A group named from the sheet offers its look-alikes at once, as a rename does.
+                    if (looksForSuggestionOnNaming(wasNamed, isNamed = name != null)) loadMergeSuggestion(personId)
+                    wasNamed = name != null
 
-                val manualKeys = if (name.isNullOrBlank()) flowOf(emptyList())
-                    else personManualPhotoDao.photoKeysForName(account, name)
+                    val manualKeys = if (name == null) flowOf(emptyList())
+                        else personManualPhotoDao.photoKeysForName(account, name)
 
-                combine(
-                    faceDao.photoKeysForPerson(account, personId),
-                    manualKeys,
-                    if (userId == null) getGalleryItems.invokeLocalOnly() else getGalleryItems.invoke(userId),
-                ) { faceKeys, added, library ->
-                    val keys = (faceKeys + added).toSet()
-                    library.filter { it.stableId in keys }
-                        .sortedByDescending { it.captureTimeMs }
-                }.collect { matched ->
-                    _uiState.update { it.copy(isLoading = false, items = matched) }
+                    combine(
+                        faceDao.photoKeysForPerson(account, personId),
+                        manualKeys,
+                        library,
+                    ) { faceKeys, added, items ->
+                        val keys = (faceKeys + added).toSet()
+                        items.filter { it.stableId in keys }
+                            .sortedByDescending { it.captureTimeMs }
+                    }.collect { matched ->
+                        _uiState.update { it.copy(isLoading = false, items = matched) }
+                    }
                 }
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -174,6 +195,22 @@ class PersonDetailViewModel @Inject constructor(
             }
         }
     }
+
+    /** The page's title as it changes: the person's name and whether it is the Unsorted bucket. A row
+     *  missing from the first read still emits, as an unnamed person, so the grid settles; one that
+     *  disappears later (merged away, or an emptied Unsorted bucket) emits nothing, so the title holds
+     *  while the page leaves. */
+    private fun observeIdentity(account: String, personId: Long): Flow<PageIdentity> =
+        personDao.observePeopleForUser(account)
+            .map { people -> people.firstOrNull { it.id == personId } }
+            .withIndex()
+            .filter { (index, row) -> index == 0 || row != null }
+            .map { (_, row) ->
+                PageIdentity(name = row?.displayName?.takeIf { it.isNotBlank() }, isOther = row?.isOther == true)
+            }
+            .distinctUntilChanged()
+
+    private data class PageIdentity(val name: String?, val isOther: Boolean)
 
     /** Observe the person's current photo keys (faces minus removed, plus manual adds), so the add
      *  picker can exclude what the person already holds. */
@@ -194,26 +231,43 @@ class PersonDetailViewModel @Inject constructor(
     }
 
     /** Load the merge picker: every other person, ordered by how closely their mean face matches this
-     *  person's, so a likely duplicate sits first. */
+     *  person's, so a likely duplicate sits first. The same read refreshes this person's own face tile,
+     *  the face the name-or-merge sheet shows. The mean faces come from [personCentroids], this person's
+     *  summed from its own faces; if they cannot be read the picker still lists everyone, unranked, and a
+     *  failed people read leaves it empty rather than taking the app down. */
     fun loadMergeCandidates(personId: Long) {
         viewModelScope.launch {
-            val userId = accountManager.getPrimaryUserId().first()
-            val account = userId?.id ?: PhotoLocationEntity.LOCAL_USER
-            val centroids = withContext(Dispatchers.Default) {
-                centroidsByPerson(faceDao.allFacesByScoreDesc(account))
-            }
-            val target = centroids[personId]
-            val people = observePeopleUseCase(
-                userId,
-                if (userId == null) getGalleryItems.invokeLocalOnly() else getGalleryItems.invoke(userId),
-            ).first().mapNotNull { it.toPersonUi() }
-            _mergeCandidates.value = people
-                .filter { it.personId != personId && !it.displayName.isNullOrBlank() }
-                .sortedByDescending { c ->
-                    val a = target ?: return@sortedByDescending -1f
-                    val b = centroids[c.personId] ?: return@sortedByDescending -1f
-                    cosineSimilarity(a, b)
+            try {
+                val userId = accountManager.getPrimaryUserId().first()
+                val account = userId?.id ?: PhotoLocationEntity.LOCAL_USER
+                val people = observePeopleUseCase(
+                    userId,
+                    if (userId == null) getGalleryItems.invokeLocalOnly() else getGalleryItems.invoke(userId),
+                ).first().mapNotNull { it.toPersonUi() }
+                _uiState.update { state -> state.copy(tile = people.firstOrNull { it.personId == personId }) }
+                val candidates = people.filter { it.personId != personId && !it.displayName.isNullOrBlank() }
+                val compared = candidates.mapTo(HashSet()) { it.personId } + personId
+                val centroids = try {
+                    withContext(Dispatchers.Default) {
+                        personCentroids.load(account, exactFor = personId) { it in compared }
+                    }
+                } catch (e: Throwable) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Log.w(TAG, "merge candidates unranked: ${e.javaClass.simpleName}")
+                    emptyMap()
                 }
+                val target = centroids[personId]
+                _mergeCandidates.value = candidates
+                    .sortedByDescending { c ->
+                        val a = target ?: return@sortedByDescending -1f
+                        val b = centroids[c.personId] ?: return@sortedByDescending -1f
+                        cosineSimilarity(a, b)
+                    }
+            } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "merge candidates failed: ${e.javaClass.simpleName}")
+                _mergeCandidates.value = emptyList()
+            }
         }
     }
 
@@ -261,64 +315,74 @@ class PersonDetailViewModel @Inject constructor(
      * Find the best "might also be this person" merge suggestion for [personId] (a named person): the
      * closest OTHER cluster whose mean face clears [FACE_SUGGEST_THRESHOLD], skipping any whose faces the
      * user already marked "not this person". Singletons are eligible, since a lone side-profile shot is
-     * exactly what the automatic grouping leaves separate. Shows one at a time, closest first.
+     * exactly what the automatic grouping leaves separate. Shows one at a time, closest first. The mean
+     * faces come from [personCentroids], and only the closest candidates' face ids are read, one person at a
+     * time, until one has not been turned down. A failed lookup shows no card rather than taking the app down.
      */
     fun loadMergeSuggestion(personId: Long) {
         viewModelScope.launch {
-            val userId = accountManager.getPrimaryUserId().first()
-            val account = userId?.id ?: PhotoLocationEntity.LOCAL_USER
-            val name = personDao.personById(personId)?.displayName
-            if (name.isNullOrBlank()) { _mergeSuggestion.value = null; return@launch }
-            // The Unsorted bucket is a mixed pile of junk, so its mean face is meaningless: never offer it
-            // as a "might also be this person" merge, which would fold the whole pile into a named person.
-            val otherId = personDao.otherPersonId(account)
-            val bestId = withContext(Dispatchers.Default) {
-                val faces = faceDao.allFacesByScoreDesc(account)
-                val centroids = centroidsByPerson(faces)
-                val target = centroids[personId] ?: return@withContext -1L
-                val rejectedFaceIds = notPersonDao.allForUser(account)
-                    .filter { it.personName == name }.mapTo(HashSet()) { it.faceId }
-                val faceIdsByPerson = HashMap<Long, MutableSet<String>>()
-                for (f in faces) {
-                    if (f.rejected) continue
-                    val pid = f.personId ?: continue
-                    faceIdsByPerson.getOrPut(pid) { HashSet() }.add(f.id)
-                }
-                var chosen = -1L
-                var bestSim = FACE_SUGGEST_THRESHOLD
-                for ((pid, c) in centroids) {
-                    if (pid == personId) continue
-                    if (pid == otherId) continue
-                    // Never re-offer a cluster the user already said is not this person.
-                    if (faceIdsByPerson[pid]?.any { it in rejectedFaceIds } == true) continue
-                    // Nor one already accepted/dismissed this session, even if a recluster re-split it
-                    // under a new id: match on the face ids that were handled.
-                    val pidFaces = faceIdsByPerson[pid]
-                    if (pidFaces != null && pidFaces.isNotEmpty() && pidFaces.all { it in handledCandidateFaceIds }) continue
-                    val s = cosineSimilarity(target, c)
-                    if (s > bestSim) { bestSim = s; chosen = pid }
-                }
-                chosen
+            try {
+                findMergeSuggestion(personId)
+            } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "merge suggestion failed: ${e.javaClass.simpleName}")
+                _mergeSuggestion.value = null
             }
-            if (bestId < 0L) { _mergeSuggestion.value = null; return@launch }
-            // Auto-merge on: accept the same card the user would tap, rather than surfacing it. Fold the
-            // look-alike in, re-cluster, then look for the next one, so a named person absorbs its whole
-            // chain of look-alikes with no taps. Only an UNNAMED candidate is auto-accepted; a rare
-            // named-vs-named suggestion still surfaces as a card so the user decides, never silently
-            // merging two people they named apart.
-            val autoMerge = context.settingsDataStore.data.first()[SettingsKeys.FACE_AUTO_MERGE] == true
-            val candidateNamed = !personDao.personById(bestId)?.displayName.isNullOrBlank()
-            if (autoMerge && !candidateNamed) {
-                foldPersonInto(account, bestId, name)
-                faceIndexingScheduler.requestRecluster(userId)
-                loadMergeSuggestion(personId)
-                return@launch
-            }
-            _mergeSuggestion.value = observePeopleUseCase(
-                userId,
-                if (userId == null) getGalleryItems.invokeLocalOnly() else getGalleryItems.invoke(userId),
-            ).first().firstOrNull { it.personId == bestId }?.toPersonUi()
         }
+    }
+
+    private suspend fun findMergeSuggestion(personId: Long) {
+        // A candidate merged away since it was offered (from its own page, opened off the card) would
+        // keep a card up for a group that no longer exists until the lookup below settles; drop it now.
+        _mergeSuggestion.value?.let { held ->
+            if (dropsHeldSuggestion(personDao.personById(held.personId))) {
+                _mergeSuggestion.compareAndSet(held, null)
+            }
+        }
+        val userId = accountManager.getPrimaryUserId().first()
+        val account = userId?.id ?: PhotoLocationEntity.LOCAL_USER
+        val name = personDao.personById(personId)?.displayName
+        if (name.isNullOrBlank()) { _mergeSuggestion.value = null; return }
+        // The Unsorted bucket is a mixed pile of junk, so its mean face is meaningless: never offer it
+        // as a "might also be this person" merge, which would fold the whole pile into a named person.
+        val otherId = personDao.otherPersonId(account)
+        val bestId = withContext(Dispatchers.Default) {
+            val centroids = personCentroids.load(account, exactFor = personId) { it != otherId }
+            val target = centroids[personId] ?: return@withContext -1L
+            val rejectedFaceIds = notPersonDao.allForUser(account)
+                .filter { it.personName == name }.mapTo(HashSet()) { it.faceId }
+            val ranked = rankSuggestionCandidates(
+                target, centroids, skip = setOfNotNull(personId, otherId), threshold = FACE_SUGGEST_THRESHOLD,
+            )
+            for (pid in ranked) {
+                val pidFaces = faceDao.faceIdsForPerson(account, pid)
+                // Never re-offer a cluster the user already said is not this person.
+                if (pidFaces.any { it in rejectedFaceIds }) continue
+                // Nor one already accepted/dismissed this session, even if a recluster re-split it
+                // under a new id: match on the face ids that were handled.
+                if (pidFaces.isNotEmpty() && pidFaces.all { it in handledCandidateFaceIds }) continue
+                return@withContext pid
+            }
+            -1L
+        }
+        if (bestId < 0L) { _mergeSuggestion.value = null; return }
+        // Auto-merge on: accept the same card the user would tap, rather than surfacing it. Fold the
+        // look-alike in, re-cluster, then look for the next one, so a named person absorbs its whole
+        // chain of look-alikes with no taps. Only an UNNAMED candidate is auto-accepted; a rare
+        // named-vs-named suggestion still surfaces as a card so the user decides, never silently
+        // merging two people they named apart.
+        val autoMerge = context.settingsDataStore.data.first()[SettingsKeys.FACE_AUTO_MERGE] == true
+        val candidateNamed = !personDao.personById(bestId)?.displayName.isNullOrBlank()
+        if (autoMerge && !candidateNamed) {
+            foldPersonInto(account, bestId, name)
+            faceIndexingScheduler.requestRecluster(userId)
+            loadMergeSuggestion(personId)
+            return
+        }
+        _mergeSuggestion.value = observePeopleUseCase(
+            userId,
+            if (userId == null) getGalleryItems.invokeLocalOnly() else getGalleryItems.invoke(userId),
+        ).first().firstOrNull { it.personId == bestId }?.toPersonUi()
     }
 
     /** Accept the current merge suggestion: fold [candidateId] into this named person, then look for the
@@ -371,27 +435,6 @@ class PersonDetailViewModel @Inject constructor(
     /** Leave the current suggestion for now: hide it without recording anything, so it can surface again
      *  the next time the person is opened. */
     fun clearMergeSuggestion() { _mergeSuggestion.value = null }
-
-    /** L2-normalised mean embedding per person id (rejected faces excluded), a person's centroid. */
-    private fun centroidsByPerson(faces: List<eu.akoos.photos.data.db.entity.FaceEntity>): Map<Long, FloatArray> {
-        val sums = HashMap<Long, DoubleArray>()
-        for (f in faces) {
-            if (f.rejected) continue
-            val pid = f.personId ?: continue
-            val e = unpackEmbedding(f.embedding)
-            if (e.size != FACE_EMBEDDING_DIM) continue
-            val acc = sums.getOrPut(pid) { DoubleArray(e.size) }
-            for (i in e.indices) acc[i] += e[i]
-        }
-        val out = HashMap<Long, FloatArray>()
-        for ((pid, acc) in sums) {
-            var norm = 0.0
-            for (v in acc) norm += v * v
-            val inv = if (norm > 0.0) 1.0 / sqrt(norm) else 0.0
-            out[pid] = FloatArray(acc.size) { (acc[it] * inv).toFloat() }
-        }
-        return out
-    }
 
     /** Rename the person, clearing the name back to null on empty input. Moves any manual memberships
      *  onto the new name so added photos follow the rename, then re-observes under it. */
@@ -610,3 +653,18 @@ class PersonDetailViewModel @Inject constructor(
         return chosen ?: faceDao.topFaceForPerson(account, personId)
     }
 }
+
+/**
+ * Whether the page looks for a merge suggestion as its person's name is read again: only when a group
+ * that was open unnamed ([wasNamed] false) has just been given a name. The first read ([wasNamed] null)
+ * is the page opening, which looks for one on its own.
+ */
+internal fun looksForSuggestionOnNaming(wasNamed: Boolean?, isNamed: Boolean): Boolean =
+    wasNamed == false && isNamed
+
+/**
+ * Whether the merge suggestion the page holds is dropped as the page looks again: once its candidate's
+ * row ([candidateRow]) is gone, the candidate was merged away, so the card would offer a group that no
+ * longer exists.
+ */
+internal fun dropsHeldSuggestion(candidateRow: PersonEntity?): Boolean = candidateRow == null

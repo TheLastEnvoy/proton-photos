@@ -688,9 +688,77 @@ class HiddenVaultDecisionsTest {
     }
 
     @Test
+    fun `a hide drops the labels under the device uri and the Drive link id of each hidden photo`() {
+        val keys = HiddenVaultDecisions.labelKeysOfHidden(
+            vaultUris = listOf("file:///v/1", "file:///v/2", "file:///v/3"),
+            sourceByVaultUri = mapOf("file:///v/1" to "content://media/1", "file:///v/2" to "content://media/2"),
+            cloudIdEntries = listOf("file:///v/1|link-1", "file:///v/9|link-9", "file:///v/3|link-3"),
+        )
+
+        assertEquals(listOf("content://media/1", "content://media/2", "link-1", "link-3"), keys)
+    }
+
+    @Test
+    fun `a hidden photo with no recorded source or pairing adds no key, and blank ids are ignored`() {
+        val keys = HiddenVaultDecisions.labelKeysOfHidden(
+            vaultUris = listOf("file:///v/1"),
+            sourceByVaultUri = emptyMap(),
+            cloudIdEntries = listOf("file:///v/1|", "file:///v/1"),
+        )
+
+        assertTrue(keys.isEmpty())
+    }
+
+    @Test
+    fun `the keys of a hide are listed once`() {
+        val keys = HiddenVaultDecisions.labelKeysOfHidden(
+            vaultUris = listOf("file:///v/1", "file:///v/2"),
+            sourceByVaultUri = mapOf("file:///v/1" to "link-1", "file:///v/2" to "content://media/2"),
+            cloudIdEntries = listOf("file:///v/1|link-1"),
+        )
+
+        assertEquals(listOf("link-1", "content://media/2"), keys)
+    }
+
+    @Test
     fun `nothing to confirm splits into nothing`() {
         val split = HiddenVaultDecisions.confirmSplit(emptyList(), mapOf("v1" to "s1")) { true }
         assertTrue(split.publish.isEmpty())
         assertTrue(split.survivors.isEmpty())
+    }
+
+    @Test
+    fun `an involuntary sign-out saves every vault file that has no Drive copy`() {
+        val saved = HiddenVaultDecisions.deviceOnlyVaultUris(
+            blobUris = setOf("file:///v/c", "file:///v/a", "file:///v/b"),
+            pairedUris = setOf("file:///v/b"),
+        )
+
+        assertEquals(listOf("file:///v/a", "file:///v/c"), saved)
+    }
+
+    @Test
+    fun `a vault of nothing but backed-up photos has nothing to save`() {
+        val saved = HiddenVaultDecisions.deviceOnlyVaultUris(
+            blobUris = setOf("file:///v/a", "file:///v/b"),
+            pairedUris = setOf("file:///v/a", "file:///v/b", "file:///v/gone"),
+        )
+
+        assertTrue(saved.isEmpty())
+    }
+
+    @Test
+    fun `a vault file no record names is saved, since nothing says Drive holds it`() {
+        val saved = HiddenVaultDecisions.deviceOnlyVaultUris(
+            blobUris = setOf("file:///v/unnamed"),
+            pairedUris = emptySet(),
+        )
+
+        assertEquals(listOf("file:///v/unnamed"), saved)
+    }
+
+    @Test
+    fun `an empty vault has nothing to save`() {
+        assertTrue(HiddenVaultDecisions.deviceOnlyVaultUris(emptySet(), setOf("file:///v/a")).isEmpty())
     }
 }

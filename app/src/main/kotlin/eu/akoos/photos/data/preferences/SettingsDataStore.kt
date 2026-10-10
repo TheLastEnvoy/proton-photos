@@ -81,6 +81,17 @@ object SettingsKeys {
      *  install that never picks a mode keeps the grid it already had. */
     val ALBUMS_SORT_MODE = intPreferencesKey("albums_sort_mode")
 
+    /** When false, the Albums grid drops the pinned Collection card from its first cell; the people,
+     *  places and On this day behind it stay reachable from Search. Absent = true (shown). A view
+     *  preference of the phone rather than of the account, like [ALBUM_GRID_COLUMNS]: it holds in a
+     *  guest session and survives a sign-out. */
+    val ALBUMS_SHOW_COLLECTION = booleanPreferencesKey("albums_show_collection")
+
+    /** How the Albums tab lays out its albums and device folders, an AlbumsViewMode ordinal
+     *  (0 = Grid, 1 = List). Absent = Grid. A view preference of the phone rather than of the
+     *  account, like [ALBUMS_SHOW_COLLECTION]: it holds in a guest session and survives a sign-out. */
+    val ALBUMS_VIEW_MODE = intPreferencesKey("albums_view_mode")
+
     /** Direction the photos inside an album are listed in, an AlbumPhotoSortMode ordinal
      *  (0 = NewestFirst, 1 = OldestFirst). Absent = NewestFirst, the order albums have always
      *  opened on. One global choice every album shares: a per-album key would grow with the
@@ -90,18 +101,60 @@ object SettingsKeys {
     /** Direction the photos inside a device folder are listed in, an AlbumPhotoSortMode ordinal
      *  (0 = NewestFirst, 1 = OldestFirst). Absent = NewestFirst, the order a folder opens on. Its
      *  own key rather than [ALBUM_PHOTO_SORT_MODE]: a folder and an album are browsed for different
-     *  reasons, so a direction chosen in one has no claim on the other. One global choice every
-     *  folder shares, since a per-folder key would grow with the device's bucket list and rewrite
-     *  the whole preferences file on each change. */
+     *  reasons, so a direction chosen in one has no claim on the other. The default a folder with no choice of its own follows; a choice made on one folder is kept apart, per folder. */
     val DEVICE_FOLDER_PHOTO_SORT_MODE = intPreferencesKey("device_folder_photo_sort_mode")
+
+    /** Span of dates each header inside an album gathers, an AlbumPhotoGrouping ordinal
+     *  (0 = Month, 1 = Day, 2 = Year). Absent = Month, the headers albums have always shown. One
+     *  global choice every album shares: a per-album key would grow with the library and rewrite
+     *  the whole preferences file on each change. */
+    val ALBUM_PHOTO_GROUPING = intPreferencesKey("album_photo_grouping")
+
+    /** Span of dates each header inside a device folder gathers, an AlbumPhotoGrouping ordinal
+     *  (0 = Month, 1 = Day, 2 = Year). Absent = Month, the headers a folder has always shown. Its
+     *  own key rather than [ALBUM_PHOTO_GROUPING]: a folder and an album are browsed for different
+     *  reasons, so a grouping chosen in one has no claim on the other. The default a folder with no choice of its own follows; a choice made on one folder is kept apart, per folder. */
+    val DEVICE_FOLDER_PHOTO_GROUPING = intPreferencesKey("device_folder_photo_grouping")
+
+    /** The albums whose photo direction was chosen on that album, entries "ordinal:linkId". Only the
+     *  albums that differ from [ALBUM_PHOTO_SORT_MODE] have one. */
+    val ALBUM_PHOTO_SORT_OVERRIDES = stringSetPreferencesKey("album_photo_sort_overrides")
+
+    /** The albums whose header span was chosen on that album, entries "ordinal:linkId". */
+    val ALBUM_PHOTO_GROUPING_OVERRIDES = stringSetPreferencesKey("album_photo_grouping_overrides")
+
+    /** The device folders whose photo direction was chosen on that folder, entries "ordinal:folderName". */
+    val DEVICE_FOLDER_PHOTO_SORT_OVERRIDES = stringSetPreferencesKey("device_folder_photo_sort_overrides")
+
+    /** The device folders whose header span was chosen on that folder, entries "ordinal:folderName". */
+    val DEVICE_FOLDER_PHOTO_GROUPING_OVERRIDES = stringSetPreferencesKey("device_folder_photo_grouping_overrides")
 
     /** The user's own Albums-grid arrangement, a '|'-separated list of album linkIds, read only
      *  when [ALBUMS_SORT_MODE] is Custom. Absent or empty = no arrangement yet, which Custom
      *  resolves as LastActivity. '|' matches [PENDING_ORPHAN_DELETES] and the widget's id lists,
      *  since a Drive linkId is base64 and can end in '=' padding. Holds ids the grid is not
-     *  currently showing, so a hidden album keeps its slot for its return; never pruned against
-     *  what is on screen. */
+     *  currently showing, so a hidden album, or one taken off the grid with [ALBUMS_GRID_EXCLUDED],
+     *  keeps its slot for its return; never pruned against what is on screen. */
     val ALBUMS_CUSTOM_ORDER = stringPreferencesKey("albums_custom_order")
+
+    /**
+     * Albums and device folders the user took off the Albums grid, one entry per card: "album:" and
+     * a cloud album's linkId, or "folder:" and a device folder's MediaStore bucket display name, the
+     * identity every per-folder preference here uses. The prefixes keep the two kinds apart, so a
+     * folder named like an album's id never matches it. Read and written through
+     * [eu.akoos.photos.presentation.albums.AlbumsGridExclusion].
+     *
+     * Only the grid reads it, and its Excluded filter lists these entries so each can be put back.
+     * Nothing else changes: the files stay where they are, backup and the timeline carry on, and
+     * every picker and search still finds the album. Deliberately NOT [HIDDEN_ALBUM_IDS] or
+     * [HIDDEN_FOLDER_NAMES], which also take the photos out of every listing and move a folder's
+     * photos into the vault.
+     *
+     * Device-wide rather than per account, like [ALBUMS_SHOW_COLLECTION]: it holds in a guest session
+     * and survives a sign-out, and an id of an album the signed-in account does not hold matches no
+     * card.
+     */
+    val ALBUMS_GRID_EXCLUDED = stringSetPreferencesKey("albums_grid_excluded")
 
     /** When true (default), the viewer + editor will NOT auto-download cloud full-res
      *  blobs on metered networks. Wifi-only is the data-conscious default; users on
@@ -202,6 +255,14 @@ object SettingsKeys {
      *  the eye button on the Timeline filter screen. Absent / empty = every category shows. */
     val CATEGORY_RAIL_HIDDEN = stringSetPreferencesKey("category_rail_hidden")
 
+    /** User's order for the shortcut tiles on the Albums tab, a CSV of LibraryTile enum names. Absent =
+     *  the default order. */
+    val ALBUMS_TILE_ORDER = stringPreferencesKey("albums_tile_order")
+
+    /** LibraryTile enum names the user has hidden from the Albums tab's shortcut row. Absent / empty =
+     *  every tile shows. */
+    val ALBUMS_TILE_HIDDEN = stringSetPreferencesKey("albums_tile_hidden")
+
     val LANGUAGE = stringPreferencesKey("language")
 
     /** Which top-level gallery tab opens on app start: 0 = Photos, 1 = Albums, 2 = Shared.
@@ -283,6 +344,10 @@ object SettingsKeys {
      * restore. Absent for items hidden before this map existed.
      */
     val HIDDEN_URI_ORIGINAL_NAME_MAP = stringSetPreferencesKey("hidden_uri_original_name_map")
+
+    /** The optional vault password, encrypted under a key that never leaves the Android Keystore (see
+     *  VaultPasswordStore). Absent when no password is set. Machine-level: it survives a sign-out. */
+    val VAULT_PASSWORD_BLOB = stringPreferencesKey("vault_password_blob")
 
     /**
      * hiddenUri → everything else the hidden photo owned that is keyed by its device uri, as a set of
@@ -369,6 +434,14 @@ object SettingsKeys {
      * collides with this value.
      */
     const val PENDING_ALBUM_ADD_NO_ALBUM = "__force_upload_no_album__"
+
+    /**
+     * How many upload passes a queued add to an album shared with this user has missed, one
+     * "count|albumLinkId|localUri" entry per queued pair. Such an add is a copy under a new link id,
+     * so the album's children cannot confirm it the way they confirm an add to an owned album; the
+     * pair is let go after a bounded number of misses instead of being retried on every pass.
+     */
+    val FOREIGN_ALBUM_JOIN_MISSES = stringSetPreferencesKey("foreign_album_join_misses")
 
     /**
      * Folder names the user opted in to mirror as Drive albums. When a photo is uploaded
@@ -494,6 +567,10 @@ object SettingsKeys {
      *  [COMPRESS_ON_UPLOAD]; its quality tier is [COMPRESS_UPLOAD_TIER_VIDEO]. The on-device original
      *  is never touched. Off by default. */
     val COMPRESS_VIDEO_ON_UPLOAD = booleanPreferencesKey("compress_video_on_upload")
+    /** When true, an Ultra HDR photo is compressed like any other and loses its HDR rendition; when
+     *  false it uploads whole so the gain map survives. Only read while [COMPRESS_ON_UPLOAD] is on.
+     *  Off by default. */
+    val COMPRESS_HDR_PHOTOS = booleanPreferencesKey("compress_hdr_photos")
     /** Ordinal of the PHOTO compression tier, mapping to an [eu.akoos.photos.domain.entity.UploadCompressionTier]
      *  value. Absent = the Balanced default. Consulted by the photo ([COMPRESS_ON_UPLOAD]) path; the
      *  video path reads its own [COMPRESS_UPLOAD_TIER_VIDEO]. */
@@ -610,6 +687,10 @@ object SettingsKeys {
      *  (not account-scoped): it is never cleared on sign-out. */
     val THANKS_2_5_0_SEEN = booleanPreferencesKey("thanks_2_5_0_seen")
 
+    /** True once the user has added a label for the first time. Until then the details panel's
+     *  Labels section says where labels are kept. Device-wide, so a sign-out does not bring it back. */
+    val LABELS_NOTE_SEEN = booleanPreferencesKey("labels_note_seen")
+
     /** Off switch for the news feed. Absent reads as on. When off, the feed is not fetched and the
      *  unread dot never shows, so a user who does not want it pays nothing for it. */
     val NEWS_ENABLED = booleanPreferencesKey("news_enabled")
@@ -681,6 +762,10 @@ object SettingsKeys {
      *  the album is reachable only through the biometric-gated hidden area. Nothing is deleted or
      *  modified on Drive, so a hidden album stays intact and reappears on unhide. */
     val HIDDEN_ALBUM_IDS = stringSetPreferencesKey("hidden_album_ids")
+
+    /** The duplicate groups the user ignores, one entry per group: its copies' ids sorted and joined by a
+     *  bar. Device-wide rather than per account, so a guest keeps them and a sign-out does not lose them. */
+    val DUPLICATE_IGNORED_GROUPS = stringSetPreferencesKey("duplicate_ignored_groups")
 
     /** Cloud photo linkIds individually hidden, client-side only (Proton has no custom tags). Holds
      *  single CloudOnly photos the user hid one by one, the per-photo companion to [HIDDEN_ALBUM_IDS].
@@ -814,6 +899,26 @@ object SettingsKeys {
      * [FACE_MODEL_VERSION_KEY], which forces a full re-embed.
      */
     val FACE_CLUSTER_PARAMS_VERSION_KEY = intPreferencesKey("face_cluster_params_version")
+
+    /**
+     * This install's machine-learning sync id, a random UUID created the first time it is asked for.
+     * It names the install's own snapshot files in the Drive "ML data" folder
+     * ([eu.akoos.photos.data.mlsync.MlDriveNaming.fileName]), which is how every install of an account
+     * keeps its own pair and how another device tells them apart on restore. It belongs to the install
+     * rather than the account, so sign-out leaves it in place: a fresh id would strand the files
+     * already written as a second, stale device. Read and created through
+     * [eu.akoos.photos.data.mlsync.MlDriveStore.deviceId].
+     */
+    val ML_SYNC_DEVICE_ID = stringPreferencesKey("ml_sync_device_id")
+
+    /**
+     * A random id of this install, created once and kept across restarts and sign-outs, from which each
+     * account's Drive SDK client id is derived, so an upload draft the app left behind before a restart
+     * is recognised as its own instead of blocking the next attempt as another client's, while two
+     * accounts on one install never share an id. Never handed to the SDK as it is. Read and created
+     * through [eu.akoos.photos.data.sdk.SdkDriveClientProvider].
+     */
+    val DRIVE_SDK_CLIENT_UID = stringPreferencesKey("drive_sdk_client_uid")
 
     /**
      * DEBUG-only large-library simulator size. N synthetic photo_listing rows are generated

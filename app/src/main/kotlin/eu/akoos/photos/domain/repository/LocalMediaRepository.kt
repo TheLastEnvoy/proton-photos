@@ -23,12 +23,71 @@
 package eu.akoos.photos.domain.repository
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import eu.akoos.photos.domain.entity.LocalMediaItem
 
+/**
+ * One read of the device's photos and videos, and whether it saw all of them.
+ *
+ * [items] is whatever the read found, for a reader that shows or acts on what is there. [complete]
+ * says the read saw every file: both media grants held, each collection read to its end, no row
+ * handed back twice (the mark of a read a concurrent change tore, which also pushes rows off the
+ * end), and at least one file found, since an empty read is also what a storage volume not yet
+ * mounted answers. Only a complete read may stand for "a file it did not return is gone": a step
+ * that deletes, demotes or reaps on that absence skips itself otherwise, and the next complete read
+ * catches up.
+ */
+data class DeviceMediaScan(
+    val items: List<LocalMediaItem>,
+    val complete: Boolean,
+)
+
 interface LocalMediaRepository {
+    /**
+     * Every photo and video on the device, newest first, kept current as MediaStore changes.
+     *
+     * One list for the whole app: every collector shares the same scan and the same copy, and a new
+     * collector gets the list already held at once. That list can trail a change that is still
+     * settling, so a reader that acts on the device as it is right now reads [freshMedia] instead.
+     */
     fun observeLocalMedia(): Flow<List<LocalMediaItem>>
+
+    /**
+     * Every photo and video on the device, read from MediaStore after this call began.
+     *
+     * For a one-shot reader that acts on the device as it is now (a reconcile, an upload pass, a
+     * backfill walk), where the list [observeLocalMedia] holds could miss a file that just arrived
+     * or still carry one that just went. Calls that overlap share one scan, a scan never runs
+     * alongside another, and the result also refreshes what [observeLocalMedia] collectors see.
+     * The list is what the scan found even when it could not see everything, so a reader that takes
+     * a file's absence for its deletion reads [freshScan] instead. Throws when the scan fails outright.
+     */
+    suspend fun freshMedia(): List<LocalMediaItem> = freshScan().items
+
+    /**
+     * [freshMedia] together with whether the scan saw the whole device ([DeviceMediaScan.complete]):
+     * the read for every step that deletes, demotes or reaps because a file is missing from it.
+     */
+    suspend fun freshScan(): DeviceMediaScan
+
     fun observeTrashedMedia(): Flow<List<LocalMediaItem>>
+
+    /**
+     * How many items [observeTrashedMedia] lists, kept current the same way, for a reader that shows
+     * only the number. The device repository counts the trash without building an item per row.
+     */
+    fun countTrashedMedia(): Flow<Int> = observeTrashedMedia().map { it.size }
+
     fun hasMediaPermission(): Flow<Boolean>
+
+    /**
+     * Which of [uris] a direct look by id confirms are gone from the device, for a step that drops or
+     * demotes a row on a scan's word alone: a trashed file is missing from every scan yet still
+     * restorable, and a torn read can skip a row without repeating one. A file in the trash counts as
+     * present, and a uri that cannot be looked up is never reported gone.
+     */
+    suspend fun confirmedGone(uris: Collection<String>): Set<String>
+
     suspend fun queryByUri(uri: String): LocalMediaItem?
 
     /**
@@ -46,11 +105,13 @@ interface LocalMediaRepository {
     suspend fun sha1(uri: String): String?
 
     /**
-     * Forces a re-query of MediaStore. Use after the user grants the media permission: the
-     * MediaStore [android.database.ContentObserver] does not fire on a permission change, so
-     * without this trigger the gallery would stay empty until the app restarts. Also the way a
-     * side store the scan reads (the capture-date overrides) announces a change the provider
-     * itself never sees, so a correction shows without waiting for the next MediaStore event.
+     * Asks the shared [observeLocalMedia] list to re-query MediaStore. Use after the user grants the
+     * media permission: the MediaStore [android.database.ContentObserver] does not fire on a
+     * permission change, so without this trigger the gallery would stay empty until the app
+     * restarts. Also the way a side store the scan reads (the capture-date overrides) announces a
+     * change the provider itself never sees, so a correction shows without waiting for the next
+     * MediaStore event. Does nothing while no one observes the list, since the next observer
+     * starts from a new query anyway.
      */
     fun notifyMediaChanged()
 }

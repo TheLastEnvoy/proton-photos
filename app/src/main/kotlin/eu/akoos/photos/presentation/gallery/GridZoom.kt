@@ -48,7 +48,8 @@ import kotlin.math.max
 /**
  * Shared zoom ladder for the photo grid. The timeline pinch-zooms through [LEVELS] (a column
  * count + date grouping per step); the album / device-folder / hidden grids use a fixed column
- * count from the grid-layout preference. One source of truth so GalleryGrid (pinch),
+ * count from the grid-layout preference, and a pinch on the album and device-folder grids steps
+ * their date headers only, keeping that count. One source of truth so GalleryGrid (pinch),
  * GalleryViewModel (opening level + persistence) and the grid-layout settings page all agree.
  */
 object GridZoom {
@@ -81,8 +82,9 @@ object GridZoom {
 }
 
 /**
- * Live fixed-default column count for the album / device-folder / hidden grids. These grids have
- * no pinch zoom, so they always follow the grid-layout default rather than a remembered level.
+ * Live fixed-default column count for the album / device-folder / hidden grids. They always follow
+ * the grid-layout default rather than a remembered level: a pinch on the album and device-folder
+ * grids steps their date headers only and keeps this column count.
  */
 @Composable
 fun rememberDefaultGridColumns(): Int {
@@ -134,6 +136,44 @@ fun rememberAlbumColumns(): Int {
             .onEach { AlbumGridPrefsBoot.write(context, it) }
     }.collectAsStateWithLifecycle(initialValue = initial)
     return columns
+}
+
+/**
+ * Live Collection-card switch for the Albums tab, set from the Albums settings page. Seeded
+ * synchronously from [AlbumGridPrefsBoot] like [rememberAlbumColumns], so a return to the tab with the
+ * card switched off never shows it for a frame and then slides every cover one cell back. DataStore
+ * stays canonical; the collector refreshes the mirror as the value changes. Default true.
+ */
+@Composable
+fun rememberAlbumsShowCollection(): Boolean {
+    val context = LocalContext.current
+    val initial = remember { AlbumGridPrefsBoot.readShowCollection(context) }
+    val shown by remember {
+        context.settingsDataStore.data
+            .map { it[SettingsKeys.ALBUMS_SHOW_COLLECTION] ?: true }
+            .distinctUntilChanged()
+            .onEach { AlbumGridPrefsBoot.writeShowCollection(context, it) }
+    }.collectAsStateWithLifecycle(initialValue = initial)
+    return shown
+}
+
+/**
+ * Live grid-or-list choice for the Albums tab, set from the Albums filter sheet. Seeded synchronously
+ * from [AlbumGridPrefsBoot] like [rememberAlbumColumns], so a return to the tab in list view never
+ * shows the cover grid for a frame. DataStore stays canonical; the collector refreshes the mirror as
+ * the value changes. Default [AlbumsViewMode.Grid].
+ */
+@Composable
+fun rememberAlbumsViewMode(): AlbumsViewMode {
+    val context = LocalContext.current
+    val initial = remember { AlbumsViewMode.fromOrdinal(AlbumGridPrefsBoot.readViewMode(context)) }
+    val mode by remember {
+        context.settingsDataStore.data
+            .map { AlbumsViewMode.fromOrdinal(it[SettingsKeys.ALBUMS_VIEW_MODE]) }
+            .distinctUntilChanged()
+            .onEach { AlbumGridPrefsBoot.writeViewMode(context, it.ordinal) }
+    }.collectAsStateWithLifecycle(initialValue = initial)
+    return mode
 }
 
 /**

@@ -2,12 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- The Drive SDK declares minSdk 29; the app stays minSdk 26. SdkGate keeps every SDK
+         call to Android 10+ at runtime, so its native code never runs below API 29. -->
+    <uses-sdk tools:overrideLibrary="me.proton.drive.sdk" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- Android 9 and older need it for every write to shared storage. Requested together with the
+         read permission (same group, one dialog), never from Android 10 on. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     <!-- Lets the map view read un-redacted EXIF GPS from on-device photos (Android 10+). -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <uses-permission android:name="android.permission.MANAGE_MEDIA" />
@@ -171,6 +179,15 @@
             instead of WorkManager-cancelling the running worker, which would cancel an in-flight
             native PGP call and crash the process. Not exported: only our own PendingIntent fires it.
         -->
+        <receiver
+            android:name=".worker.MetadataEditCancelReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="eu.akoos.photos.action.CANCEL_METADATA_EDIT" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name=".worker.StopUploadReceiver"
             android:exported="false"

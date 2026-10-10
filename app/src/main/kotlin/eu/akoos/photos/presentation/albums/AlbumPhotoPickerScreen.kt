@@ -22,6 +22,8 @@
 
 package eu.akoos.photos.presentation.albums
 
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.animation.togetherWith
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -31,6 +33,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +43,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -82,21 +86,21 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import eu.akoos.photos.R
 import eu.akoos.photos.domain.entity.GalleryItem
+import eu.akoos.photos.presentation.common.FloatingHeader
+import eu.akoos.photos.presentation.common.AppSearchField
 import eu.akoos.photos.presentation.common.IconBubble
-import eu.akoos.photos.presentation.common.isUnfiled
+import eu.akoos.photos.presentation.gallery.BottomDock
 import eu.akoos.photos.presentation.gallery.GridZoom
 import eu.akoos.photos.presentation.gallery.PhotoCell
-import eu.akoos.photos.presentation.gallery.TimelineGrouping
 import eu.akoos.photos.presentation.gallery.TimelineScrubber
 import eu.akoos.photos.presentation.gallery.photoCellInputsFor
 import eu.akoos.photos.presentation.gallery.rememberDefaultGridColumns
 import eu.akoos.photos.presentation.gallery.rememberSeamlessGrid
 import eu.akoos.photos.presentation.gallery.rememberDragMultiSelectModifier
 import eu.akoos.photos.presentation.gallery.rememberGridPinchZoomModifier
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import eu.akoos.photos.presentation.theme.Accent
+import eu.akoos.photos.presentation.search.SearchAlbum
+import eu.akoos.photos.presentation.search.SearchAlbums
 import eu.akoos.photos.presentation.theme.AppColors
 import eu.akoos.photos.presentation.theme.FgMute
 import eu.akoos.photos.presentation.theme.FgPrimary
@@ -113,17 +117,6 @@ import androidx.compose.runtime.snapshotFlow
  * entire screen is always in selection mode. [excludeLinkIds] are the album's current cloud members,
  * pre-filtered out so the user can't re-add duplicates.
  */
-/** Type filter for the album photo picker: everything, cloud-backed only, or on-device only. */
-private enum class PickerFilter { All, Cloud, Device }
-
-/** Mime type of a gallery item across all three states, for the videos-only picker filter. Prefers the
- *  device original's type when present, else the cloud record's. */
-private fun pickerMimeTypeOf(item: GalleryItem): String? = when (item) {
-    is GalleryItem.LocalOnly -> item.local.mimeType
-    is GalleryItem.Synced -> item.local.mimeType
-    is GalleryItem.CloudOnly -> item.cloud.mimeType
-}
-
 @Composable
 fun AlbumPhotoPickerScreen(
     albumLinkId: String = "",
@@ -155,12 +148,16 @@ fun AlbumPhotoPickerScreen(
     // Header title when nothing is picked yet. Defaults to the "Add to album" wording; a return-mode
     // caller (collage, person) passes its own so the picker reads for its context.
     titleRes: Int = R.string.album_picker_title,
+    // A title built at the call site (the label picker names its label); wins over [titleRes] while nothing is picked.
+    title: String? = null,
+    // The unfiled-only toggle keeps photos no album holds, which only helps a caller adding to an album; one
+    // that picks for something else (a label) leaves it out.
+    showUnfiledFilter: Boolean = true,
     viewModel: AlbumPhotoPickerViewModel = hiltViewModel(),
 ) {
     val appColors = AppColors.current
-    val allItems by viewModel.items.collectAsStateWithLifecycle()
-    val hiddenCloudLinkIds by viewModel.hiddenCloudLinkIds.collectAsStateWithLifecycle()
-    val inAnyAlbumLinkIds by viewModel.inAnyAlbumLinkIds.collectAsStateWithLifecycle()
+    val content by viewModel.content.collectAsStateWithLifecycle()
+    val browseSource by viewModel.browseSource.collectAsStateWithLifecycle()
     val selected by viewModel.selected.collectAsStateWithLifecycle()
     val addState by viewModel.addState.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
@@ -174,40 +171,39 @@ fun AlbumPhotoPickerScreen(
     val showScrollTop by remember { derivedStateOf { gridState.firstVisibleItemIndex > 4 } }
     var pickerFilter by remember { mutableStateOf(PickerFilter.All) }
     var unfiledOnly by remember { mutableStateOf(false) }
+    // The picker browses the library (Photos) or the albums (Albums); an album opened from the list
+    // shows its own photos in the same grid. The selection lives in the view model, so it survives every
+    // switch and every step in or out of an album. The video editor's source manager and the device-only
+    // folder picker have no album browsing.
+    val sourceSwitchShown = !deviceOnly && !videosOnly
+    var showAlbums by rememberSaveable { mutableStateOf(false) }
+    var openScopeKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var openScopeName by rememberSaveable { mutableStateOf("") }
+    var albumQuery by rememberSaveable { mutableStateOf("") }
+    val inAlbum = openScopeKey != null
+    val browsingAlbums = sourceSwitchShown && showAlbums && !inAlbum
+    val scopeLinkId = openScopeKey?.takeIf { it.startsWith("c:") }?.drop(2)
+    val scopeFolder = openScopeKey?.takeIf { it.startsWith("f:") }?.drop(2)
+    val scopeMembers by remember(scopeLinkId) {
+        if (scopeLinkId != null) viewModel.albumMembers(scopeLinkId) else kotlinx.coroutines.flow.flowOf(null)
+    }.collectAsStateWithLifecycle(initialValue = null)
+    // Back steps out of an opened album first; from the list or the library it leaves the picker, which
+    // is the same as cancelling, since nothing is added until Done.
+    androidx.activity.compose.BackHandler(enabled = inAlbum) { openScopeKey = null }
     // Status bar + the floating back-pill + the type-filter row, so the grid's first row and the
     // scrubber track start cleanly below both.
-    val headerTopInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 100.dp
+    val subRows = (if (!deviceOnly && !inAlbum && !browsingAlbums) 44.dp else 0.dp) +
+        (if (browsingAlbums) 58.dp else 0.dp)
+    val headerTopInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp + subRows
+    // The gallery's own Photos / Albums dock sits at the bottom while the library or the album list is
+    // showing, so the grid's last row clears it and the navigation bar.
+    val dockShown = sourceSwitchShown && !inAlbum
+    val dockInset = if (dockShown) 76.dp else 24.dp
+    val navBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    // Drop photos already in this album, and photos hidden on this device, so the picker only
-    // offers addable new ones. A hidden photo re-added to an album would un-hide it.
-    val basePhotos = remember(allItems, excludeLinkIds, excludeKeys, hiddenCloudLinkIds, deviceOnly) {
-        val filtered =
-            if (excludeLinkIds.isEmpty() && excludeKeys.isEmpty() && hiddenCloudLinkIds.isEmpty()) allItems
-            else allItems.filter { item ->
-                val cloudId = when (item) {
-                    is GalleryItem.CloudOnly -> item.cloud.linkId
-                    is GalleryItem.Synced    -> item.cloud.linkId
-                    is GalleryItem.LocalOnly -> null
-                }
-                val cloudOk = cloudId == null || (cloudId !in excludeLinkIds && cloudId !in hiddenCloudLinkIds)
-                cloudOk && AlbumPhotoPickerViewModel.stableKeyOf(item) !in excludeKeys
-            }
-        // Device-only mode keeps only photos with a device original, since a folder move relocates a
-        // device file; a cloud-only photo has nothing on disk to move.
-        if (deviceOnly) filtered.filter { it is GalleryItem.LocalOnly || it is GalleryItem.Synced } else filtered
-    }
-    // Type filter (#40): narrow the mixed library to cloud-backed photos (CloudOnly + Synced) or
-    // on-device-only photos (LocalOnly), so it is clear which source a photo comes from. The
-    // unfiled-only filter (#73) then composes on top, so a pick like "cloud AND unfiled" holds.
-    val photos = remember(basePhotos, pickerFilter, unfiledOnly, inAnyAlbumLinkIds, videosOnly) {
-        val bySource = when (pickerFilter) {
-            PickerFilter.All -> basePhotos
-            PickerFilter.Cloud -> basePhotos.filter { it is GalleryItem.CloudOnly || it is GalleryItem.Synced }
-            PickerFilter.Device -> basePhotos.filter { it is GalleryItem.LocalOnly }
-        }
-        val byType = if (videosOnly) bySource.filter { pickerMimeTypeOf(it)?.startsWith("video/") == true } else bySource
-        if (unfiledOnly) byType.filter { isUnfiled(it, inAnyAlbumLinkIds) } else byType
-    }
+    // Filtering, date sections and key maps are prepared in the view model off the main thread, so a
+    // large library never stalls the first frame. Null means still loading, distinct from an empty result.
+    val photos = content?.photos ?: emptyList()
 
     // Pop back to the album once the add succeeds.
     androidx.compose.runtime.LaunchedEffect(addState) {
@@ -228,9 +224,7 @@ fun AlbumPhotoPickerScreen(
     }
 
     // Drive on-demand thumbnail decrypts for the visible cloud tiles, mirroring the gallery grid.
-    val keyToIndex = remember(photos) {
-        photos.mapIndexed { i, p -> AlbumPhotoPickerViewModel.stableKeyOf(p) to i }.toMap()
-    }
+    val keyToIndex = content?.indexByKey ?: emptyMap()
     androidx.compose.runtime.LaunchedEffect(photos) {
         var requested = emptySet<String>()
         snapshotFlow { gridState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String } }
@@ -264,17 +258,29 @@ fun AlbumPhotoPickerScreen(
         var levelIndex by rememberSaveable { mutableIntStateOf(GridZoom.levelForColumns(defaultCols)) }
         val (columnCount, grouping) = GridZoom.LEVELS[levelIndex.coerceIn(0, GridZoom.LEVELS.lastIndex)]
 
-        // Drag-sweep and decrypt both read the FLAT photos order; grouping below is presentational and
-        // preserves order, so the flat key->index map stays valid for hit-testing across group headers.
-        val photoKeys = remember(photos) { photos.map { AlbumPhotoPickerViewModel.stableKeyOf(it) } }
-        val indexByKey = remember(photoKeys) { photoKeys.withIndex().associate { (i, k) -> k to i } }
+        val query = PickerQuery(
+            excludeLinkIds = excludeLinkIds,
+            excludeKeys = excludeKeys,
+            deviceOnly = deviceOnly,
+            videosOnly = videosOnly,
+            filter = if (inAlbum) PickerFilter.All else pickerFilter,
+            unfiledOnly = unfiledOnly && !inAlbum,
+            scopeLinkIds = if (scopeLinkId != null) (scopeMembers ?: emptySet()) else null,
+            scopeFolder = scopeFolder,
+            grouping = grouping,
+        )
+        androidx.compose.runtime.LaunchedEffect(query) { viewModel.setQuery(query) }
+
+        // Drag-sweep and decrypt both read the FLAT photos order; the sections below keep that order,
+        // so the flat key->index map stays valid for hit-testing across group headers.
+        val photoKeys = content?.photoKeys ?: emptyList()
         // Armed at the long-press anchor so the cell's release-tap skips toggling the just-selected
         // cell back off (otherwise a stationary long-press would select then immediately deselect).
         val tapGuard = remember { mutableStateOf(false) }
         val dragSelectModifier = rememberDragMultiSelectModifier(
             gridState = gridState,
             items = photoKeys,
-            indexByKey = indexByKey,
+            indexByKey = keyToIndex,
             selected = selected,
             onSelectionChange = { proposed ->
                 // A locked key (the video editor's primary) stays selected even through a drag-sweep.
@@ -296,18 +302,7 @@ fun AlbumPhotoPickerScreen(
         )
         val pinchModifier = rememberGridPinchZoomModifier(levelIndex, GridZoom.LEVELS.size) { levelIndex = it }
 
-        // Group the flat list by the level's grouping for full-span section headers. Order is preserved,
-        // so the rendering order matches the flat `photos` order the drag indices/scrubber rely on.
-        val grouped: List<Pair<String, List<GalleryItem>>> = remember(photos, grouping) {
-            val pattern = when (grouping) {
-                TimelineGrouping.None -> "yyyy"
-                TimelineGrouping.Day -> "d MMMM yyyy"
-                TimelineGrouping.Month -> "MMMM yyyy"
-                TimelineGrouping.Year -> "yyyy"
-            }
-            val fmt = SimpleDateFormat(pattern, Locale.getDefault())
-            photos.groupBy { fmt.format(Date(it.captureTimeMs)) }.entries.map { it.key to it.value }
-        }
+        val grouped = content?.sections ?: emptyList()
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(columnCount),
@@ -319,7 +314,7 @@ fun AlbumPhotoPickerScreen(
                 start = if (seamless) 0.dp else 20.dp,
                 end = if (seamless) 0.dp else 20.dp,
                 top = headerTopInset,
-                bottom = 96.dp,
+                bottom = dockInset + navBottomInset,
             ),
             horizontalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 6.dp),
             verticalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 6.dp),
@@ -328,9 +323,11 @@ fun AlbumPhotoPickerScreen(
             modifier = Modifier.fillMaxSize().then(dragSelectModifier).then(pinchModifier),
         ) {
             if (photos.isEmpty()) {
+                val loading = content == null
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Box(Modifier.padding(horizontal = if (seamless) 20.dp else 0.dp).fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.album_picker_empty), color = FgMute, fontSize = 14.sp)
+                        if (loading) CircularProgressIndicator(color = Accent)
+                        else Text(stringResource(R.string.album_picker_empty), color = FgMute, fontSize = 14.sp)
                     }
                 }
             } else {
@@ -383,146 +380,139 @@ fun AlbumPhotoPickerScreen(
 
         // Fast-scroll scrubber over the grid — the same handle as the timeline. The drag tooltip
         // follows the pinch-derived grouping (day / month / year). Keyed to match the grid cells.
-        if (photos.isNotEmpty()) {
+        if (photos.isNotEmpty() && !browsingAlbums) {
             TimelineScrubber(
                 gridState = gridState,
                 items = photos,
                 grouping = grouping,
                 topPadding = headerTopInset,
-                bottomPadding = 96.dp,
+                bottomPadding = dockInset,
                 keyOf = { AlbumPhotoPickerViewModel.stableKeyOf(it) },
             )
         }
 
-        // Top bar — the compact floating back-pill recipe shared by Map / Calendar / Search: a
-        // small circular back button at top-start with its own title pill beside it, instead of a
-        // full-width filled bar. The title pill is single-line (title + folded-in selected count);
-        // the album name rides in its own pill pushed to the right end of the row.
-        Row(
+        if (browsingAlbums) {
+            PickerAlbumsGrid(
+                source = browseSource,
+                query = albumQuery,
+                hideLinkId = albumLinkId,
+                topInset = headerTopInset,
+                bottomInset = dockInset + navBottomInset,
+                onOpen = { entry ->
+                    openScopeKey = when (entry) {
+                        is SearchAlbum.Cloud -> "c:${entry.album.linkId}"
+                        is SearchAlbum.Folder -> "f:${entry.folder.name}"
+                    }
+                    openScopeName = entry.name
+                },
+            )
+        }
+
+        // The shared floating page header: back at the start (cancels, or steps out of an opened album),
+        // the title in a pill (the picked count once something is picked, an opened album's name), and
+        // Done at the end, which stays dull until something is picked.
+        val isWorking = addState is PickerAddState.Working
+        val canAdd = selected.isNotEmpty() && !isWorking
+        FloatingHeader(
+            title = when {
+                selected.isNotEmpty() -> stringResource(R.string.album_picker_selected, selected.size)
+                inAlbum -> openScopeName
+                albumName.isNotBlank() -> albumName
+                else -> title ?: stringResource(titleRes)
+            },
+            onBack = { if (inAlbum) openScopeKey = null else onBack() },
+            trailing = {
+                PickerDoneButton(
+                    enabled = canAdd,
+                    working = isWorking,
+                    onClick = {
+                        if (onPick != null) onPick(viewModel.selectedItems())
+                        else viewModel.addSelectedToAlbum(albumLinkId)
+                    },
+                )
+            },
+        )
+
+        // The row under the header: the source filters of the Photos view or the search of the Albums
+        // view. The grid's top inset follows it.
+        Column(
             modifier = Modifier
                 .statusBarsPadding()
                 .fillMaxWidth()
-                .padding(start = 12.dp, top = 8.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(top = 56.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            IconBubble(
-                icon = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = stringResource(R.string.close),
-                onClick = onBack,
-                diameter = 40.dp,
-                iconSize = 18.dp,
-                background = PillBg,
-                borderColor = PillBorder,
-                tint = appColors.fgPrimary,
-            )
-            Text(
-                if (selected.isEmpty()) stringResource(titleRes)
-                else stringResource(R.string.album_picker_selected, selected.size),
-                color = FgPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(PillBg, RoundedCornerShape(20.dp))
-                    .border(0.5.dp, PillBorder, RoundedCornerShape(20.dp))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                albumName,
-                color = FgMute, fontSize = 13.sp,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .widthIn(max = 160.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(PillBg, RoundedCornerShape(20.dp))
-                    .border(0.5.dp, PillBorder, RoundedCornerShape(20.dp))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-            )
-        }
-
-        // Type filter — a centered segmented control: All / Cloud / Device inside one pill, each
-        // its own segment, so a big mixed library can be narrowed to one source. Sits just below the
-        // back-pill row; the grid content inset clears both. Hidden in device-only mode, where the
-        // source is locked to Device.
-        if (!deviceOnly) {
-            Row(
-                modifier = Modifier
-                    .statusBarsPadding()
-                    .fillMaxWidth()
-                    .padding(top = 56.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            if (browsingAlbums) {
+                AppSearchField(
+                    query = albumQuery,
+                    onQueryChange = { albumQuery = it },
+                    placeholder = stringResource(R.string.albums_search_hint),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                )
+            } else if (!deviceOnly && !inAlbum) {
+                // Type filter: a centered segmented control, All / Cloud / Device inside one pill, so a big
+                // mixed library can be narrowed to one source. Hidden in device-only mode, where the source
+                // is locked to Device.
                 Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(PillBg, RoundedCornerShape(20.dp))
-                        .border(0.5.dp, PillBorder, RoundedCornerShape(20.dp))
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PickerFilterSegment(stringResource(R.string.picker_filter_all), pickerFilter == PickerFilter.All) {
-                        pickerFilter = PickerFilter.All
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(PillBg, RoundedCornerShape(20.dp))
+                            .border(0.5.dp, PillBorder, RoundedCornerShape(20.dp))
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        PickerFilterSegment(stringResource(R.string.picker_filter_all), pickerFilter == PickerFilter.All) {
+                            pickerFilter = PickerFilter.All
+                        }
+                        PickerFilterSegment(stringResource(R.string.picker_filter_cloud), pickerFilter == PickerFilter.Cloud) {
+                            pickerFilter = PickerFilter.Cloud
+                        }
+                        PickerFilterSegment(stringResource(R.string.picker_filter_device), pickerFilter == PickerFilter.Device) {
+                            pickerFilter = PickerFilter.Device
+                        }
                     }
-                    PickerFilterSegment(stringResource(R.string.picker_filter_cloud), pickerFilter == PickerFilter.Cloud) {
-                        pickerFilter = PickerFilter.Cloud
-                    }
-                    PickerFilterSegment(stringResource(R.string.picker_filter_device), pickerFilter == PickerFilter.Device) {
-                        pickerFilter = PickerFilter.Device
-                    }
+                    // Its own pill rather than a fourth segment: the control beside it picks a SOURCE, while
+                    // this picks a filed status. They are independent axes, so folding them into one
+                    // one-of-N control would make a combination like "cloud AND unfiled" unexpressible.
+                    if (showUnfiledFilter) PickerUnfiledToggle(unfiledOnly) { unfiledOnly = !unfiledOnly }
                 }
-                // Its own pill rather than a fourth segment: the control beside it picks a SOURCE, while
-                // this picks a filed status. They are independent axes, so folding them into one
-                // one-of-N control would make a combination like "cloud AND unfiled" unexpressible.
-                PickerUnfiledToggle(unfiledOnly) { unfiledOnly = !unfiledOnly }
             }
         }
 
-        // Confirm bar — "Add (N)". Disabled until at least one photo is picked.
-        val isWorking = addState is PickerAddState.Working
-        val canAdd = selected.isNotEmpty() && !isWorking
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 24.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(if (canAdd) Accent else PillBg, RoundedCornerShape(999.dp))
-                .border(0.5.dp, PillBorder, RoundedCornerShape(999.dp))
-                .clickable(enabled = canAdd) {
-                    if (onPick != null) {
-                        onPick(allItems.filter { AlbumPhotoPickerViewModel.stableKeyOf(it) in selected })
-                    } else {
-                        viewModel.addSelectedToAlbum(albumLinkId)
-                    }
-                }
-                .padding(horizontal = 24.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (isWorking) {
-                CircularProgressIndicator(color = appColors.fgPrimary, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-            }
-            Text(
-                stringResource(R.string.album_add_count, selected.size),
-                color = if (canAdd) androidx.compose.ui.graphics.Color.White else FgMute,
-                fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-            )
-        }
-
-        // Jump-to-top pill — appears once scrolled down. Centered and stacked just above the
-        // "Add (N)" confirm pill (which sits at bottom = 24.dp with ~49.dp height), mirroring the
-        // gallery's scroll-to-top affordance.
+        // The gallery's own bottom dock, the same Photos / Albums switch the timeline has, without its
+        // search button. Switching keeps the selection, which lives in the view model.
         AnimatedVisibility(
-            visible = showScrollTop,
+            visible = dockShown,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(bottom = 84.dp),
+                .padding(bottom = 24.dp),
+        ) {
+            BottomDock(
+                position = if (showAlbums) 1f else 0f,
+                searchTab = false,
+                onTabSelected = { showAlbums = it == 1 },
+            )
+        }
+
+        // Jump-to-top pill, shown once scrolled down. Centered just above the dock, mirroring the
+        // gallery's scroll-to-top affordance.
+        AnimatedVisibility(
+            visible = showScrollTop && !browsingAlbums,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = dockInset + if (dockShown) 8.dp else 0.dp),
         ) {
             IconBubble(
                 icon = Icons.Default.KeyboardArrowUp,
@@ -548,7 +538,7 @@ fun AlbumPhotoPickerScreen(
         }
         eu.akoos.photos.presentation.common.ThemedSnackbarHost(
             snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = dockInset),
         )
     }
 }
@@ -621,5 +611,123 @@ private fun PickerUnfiledToggle(selected: Boolean, onToggle: () -> Unit) {
                 .padding(7.dp)
                 .size(16.dp),
         )
+    }
+}
+
+/** The Done action in the header's trailing slot: accent while something is picked, dull until then,
+ *  with the picked count beside the word once there is one. */
+@Composable
+internal fun PickerDoneButton(enabled: Boolean, working: Boolean, onClick: () -> Unit, count: Int = 0) {
+    val colors = AppColors.current
+    Row(
+        modifier = Modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(if (enabled) Accent else PillBg, RoundedCornerShape(20.dp))
+            .border(0.5.dp, PillBorder, RoundedCornerShape(20.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (working) {
+            CircularProgressIndicator(color = colors.fgPrimary, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+        }
+        Text(
+            stringResource(R.string.picker_done),
+            color = if (enabled) Color.White else FgMute,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (count > 0) {
+            Box(
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 22.dp, minHeight = 22.dp)
+                    .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(11.dp))
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.animation.AnimatedContent(
+                    targetState = count,
+                    transitionSpec = {
+                        (androidx.compose.animation.slideInVertically(androidx.compose.animation.core.tween(140)) { it / 2 } +
+                            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(140))) togetherWith
+                            (androidx.compose.animation.slideOutVertically(androidx.compose.animation.core.tween(100)) { -it / 2 } +
+                                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(100)))
+                    },
+                    label = "pickDoneCount",
+                ) { n ->
+                    Text(
+                        n.toString(),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The picker's Albums view: the cards of the Albums tab in its order (the user's own albums, then the
+ * device folders), narrowed by the search above it. The album being added to is left out, since none of
+ * its photos can be added to it. A tap opens the album's photos in the picker's grid.
+ */
+@Composable
+private fun PickerAlbumsGrid(
+    source: SearchAlbums.Source,
+    query: String,
+    hideLinkId: String,
+    topInset: androidx.compose.ui.unit.Dp,
+    bottomInset: androidx.compose.ui.unit.Dp,
+    onOpen: (SearchAlbum) -> Unit,
+) {
+    val colors = AppColors.current
+    val entries = remember(source, query, hideLinkId) {
+        val found = if (query.isBlank()) SearchAlbums.row(source) else SearchAlbums.matches(source, query)
+        found.filterNot { it is SearchAlbum.Cloud && hideLinkId.isNotBlank() && it.album.linkId == hideLinkId }
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(top = topInset, start = 20.dp, end = 20.dp, bottom = bottomInset),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().background(colors.bg0),
+    ) {
+        if (entries.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Text(
+                    stringResource(R.string.albums_search_no_results),
+                    color = FgMute,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(vertical = 24.dp),
+                )
+            }
+        }
+        items(entries, key = { it.key }) { entry ->
+            when (entry) {
+                is SearchAlbum.Cloud -> UnifiedAlbumCard(
+                    coverModel = entry.album.coverThumbnailUrl,
+                    title = entry.album.name,
+                    metaText = androidx.compose.ui.res.pluralStringResource(
+                        R.plurals.count_items_plural, entry.album.photoCount, entry.album.photoCount,
+                    ),
+                    shareBadge = if (entry.album.isShared) AlbumShareBadge.SharedByMe else AlbumShareBadge.None,
+                    cloudBadge = AlbumCloudBadge.Cloud,
+                    onClick = { onOpen(entry) },
+                )
+                is SearchAlbum.Folder -> UnifiedAlbumCard(
+                    coverModel = entry.folder.coverUri?.let(android.net.Uri::parse),
+                    coverIsGif = entry.folder.coverIsGif,
+                    title = entry.folder.name,
+                    metaText = androidx.compose.ui.res.pluralStringResource(
+                        R.plurals.count_photos_plural, entry.folder.itemCount, entry.folder.itemCount,
+                    ),
+                    isDeviceFolder = true,
+                    onClick = { onOpen(entry) },
+                )
+            }
+        }
     }
 }

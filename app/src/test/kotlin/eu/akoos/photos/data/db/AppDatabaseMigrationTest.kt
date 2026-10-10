@@ -1346,6 +1346,203 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
+    fun migrate_v41_to_v42_createsPhotoLabelTable_compositeKeyIsPerUserPhotoLabel() {
+        Migrations.MIGRATION_41_42.migrate(db)
+
+        db.query("SELECT COUNT(*) FROM photo_label").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("the new table starts empty", 0, cur.getInt(0))
+        }
+
+        db.execSQL(
+            "INSERT INTO photo_label (userId, photoKey, label, labelKey, updatedAt) " +
+                "VALUES ('u1', 'content://media/1', 'Café', 'cafe', 1)"
+        )
+        // The same folded label on the same photo of the same account collides on the primary key.
+        db.execSQL(
+            "INSERT OR IGNORE INTO photo_label (userId, photoKey, label, labelKey, updatedAt) " +
+                "VALUES ('u1', 'content://media/1', 'CAFE', 'cafe', 2)"
+        )
+        // Another account, another photo, or another label on the same photo is a row of its own.
+        db.execSQL(
+            "INSERT INTO photo_label (userId, photoKey, label, labelKey, updatedAt) VALUES " +
+                "('local', 'content://media/1', 'cafe', 'cafe', 3), " +
+                "('u1', 'link-1', 'cafe', 'cafe', 4), " +
+                "('u1', 'content://media/1', 'beach', 'beach', 5)"
+        )
+        db.query("SELECT COUNT(*) FROM photo_label").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals(4, cur.getInt(0))
+        }
+        db.query(
+            "SELECT label FROM photo_label WHERE userId = 'u1' AND photoKey = 'content://media/1' AND labelKey = 'cafe'"
+        ).use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("the first spelling stays", "Café", cur.getString(0))
+        }
+
+        db.query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_photo_label_userId_labelKey'"
+        ).use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("the (userId, labelKey) index was created", 1, cur.getInt(0))
+        }
+
+        // Re-running the migration on an already-migrated database is harmless.
+        Migrations.MIGRATION_41_42.migrate(db)
+        db.query("SELECT COUNT(*) FROM photo_label").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals(4, cur.getInt(0))
+        }
+    }
+
+    @Test
+    fun migrate_v42_to_v43_createsStateTable_seedsEachLabelledPhotoWithItsNewestWrite() {
+        Migrations.MIGRATION_41_42.migrate(db)
+        db.execSQL(
+            "INSERT INTO photo_label (userId, photoKey, label, labelKey, updatedAt) VALUES " +
+                "('u1', 'link-1', 'a', 'a', 10), ('u1', 'link-1', 'b', 'b', 30), ('u1', 'link-2', 'c', 'c', 20), " +
+                "('local', 'link-1', 'd', 'd', 5)"
+        )
+
+        Migrations.MIGRATION_42_43.migrate(db)
+
+        db.query("SELECT userId, photoKey, changedAt FROM photo_label_state ORDER BY userId, photoKey").use { cur ->
+            val rows = buildList {
+                while (cur.moveToNext()) add(Triple(cur.getString(0), cur.getString(1), cur.getLong(2)))
+            }
+            assertEquals(
+                listOf(Triple("local", "link-1", 5L), Triple("u1", "link-1", 30L), Triple("u1", "link-2", 20L)),
+                rows,
+            )
+        }
+
+        // The key is one row per account and photo.
+        db.execSQL("INSERT OR REPLACE INTO photo_label_state (userId, photoKey, changedAt) VALUES ('u1', 'link-1', 99)")
+        db.query("SELECT COUNT(*) FROM photo_label_state WHERE userId = 'u1' AND photoKey = 'link-1'").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals(1, cur.getInt(0))
+        }
+
+        // Re-running the migration on an already-migrated database is harmless.
+        Migrations.MIGRATION_42_43.migrate(db)
+        db.query("SELECT changedAt FROM photo_label_state WHERE userId = 'u1' AND photoKey = 'link-1'").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals(99L, cur.getLong(0))
+        }
+    }
+
+    @Test
+    fun migrate_v43_to_v44_createsNameTable_keyIsPerUserAndFoldedLabel() {
+        Migrations.MIGRATION_43_44.migrate(db)
+
+        db.query("SELECT COUNT(*) FROM photo_label_name").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("the new table starts empty", 0, cur.getInt(0))
+        }
+        db.execSQL("INSERT INTO photo_label_name (userId, labelKey, label, createdAt) VALUES ('u1', 'cafe', 'Café', 1)")
+        db.execSQL("INSERT OR IGNORE INTO photo_label_name (userId, labelKey, label, createdAt) VALUES ('u1', 'cafe', 'CAFE', 2)")
+        db.execSQL("INSERT INTO photo_label_name (userId, labelKey, label, createdAt) VALUES ('local', 'cafe', 'cafe', 3)")
+        db.query("SELECT COUNT(*) FROM photo_label_name").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("one row per account and folded label", 2, cur.getInt(0))
+        }
+        db.query("SELECT label FROM photo_label_name WHERE userId = 'u1' AND labelKey = 'cafe'").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("the first spelling stays", "Café", cur.getString(0))
+        }
+
+        // Re-running the migration on an already-migrated database is harmless.
+        Migrations.MIGRATION_43_44.migrate(db)
+        db.query("SELECT COUNT(*) FROM photo_label_name").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals(2, cur.getInt(0))
+        }
+    }
+
+    @Test
+    fun migrate_v44_to_v45_addsDeletedAt_existingNamesStayLive() {
+        Migrations.MIGRATION_43_44.migrate(db)
+        db.execSQL("INSERT INTO photo_label_name (userId, labelKey, label, createdAt) VALUES ('u1', 'cafe', 'Café', 1)")
+
+        Migrations.MIGRATION_44_45.migrate(db)
+
+        db.query("SELECT deletedAt FROM photo_label_name WHERE labelKey = 'cafe'").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertTrue("an existing name is live", cur.isNull(0))
+        }
+        db.execSQL("UPDATE photo_label_name SET deletedAt = 7 WHERE labelKey = 'cafe'")
+        // Re-running the migration on an already-migrated database is harmless and keeps the value.
+        Migrations.MIGRATION_44_45.migrate(db)
+        db.query("SELECT deletedAt FROM photo_label_name WHERE labelKey = 'cafe'").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals(7L, cur.getLong(0))
+        }
+    }
+
+    @Test
+    fun migrate_v45_to_v46_dropsStateTable_keepsLiveNamesAndDropsDeletedOnes() {
+        Migrations.MIGRATION_41_42.migrate(db)
+        Migrations.MIGRATION_42_43.migrate(db)
+        db.execSQL("INSERT INTO photo_label_state (userId, photoKey, changedAt) VALUES ('u1', 'link-1', 5)")
+        Migrations.MIGRATION_43_44.migrate(db)
+        Migrations.MIGRATION_44_45.migrate(db)
+        db.execSQL("INSERT INTO photo_label_name (userId, labelKey, label, createdAt, deletedAt) VALUES ('u1', 'live', 'Live', 1, NULL)")
+        db.execSQL("INSERT INTO photo_label_name (userId, labelKey, label, createdAt, deletedAt) VALUES ('u1', 'gone', 'Gone', 2, 9)")
+
+        Migrations.MIGRATION_45_46.migrate(db)
+
+        db.query("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'photo_label_state'").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("the change times are gone", 0, cur.getInt(0))
+        }
+        db.query("SELECT labelKey, label, createdAt FROM photo_label_name ORDER BY labelKey").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals("live", cur.getString(0))
+            assertEquals("Live", cur.getString(1))
+            assertEquals(1L, cur.getLong(2))
+            assertEquals("a deleted label is dropped", 1, cur.count)
+        }
+        db.query("PRAGMA table_info(`photo_label_name`)").use { cur ->
+            val nameIndex = cur.getColumnIndex("name")
+            val columns = buildList { while (cur.moveToNext()) add(cur.getString(nameIndex)) }
+            assertEquals(listOf("userId", "labelKey", "label", "createdAt"), columns)
+        }
+
+        // Re-running the migration on an already-migrated database is harmless.
+        Migrations.MIGRATION_45_46.migrate(db)
+        db.query("SELECT COUNT(*) FROM photo_label_name").use { cur ->
+            assertTrue(cur.moveToFirst())
+            assertEquals(1, cur.getInt(0))
+        }
+    }
+
+    @Test
+    fun migrations_registerTheV45ToV46Step() {
+        assertTrue(Migrations.ALL.any { it.startVersion == 45 && it.endVersion == 46 })
+    }
+
+    @Test
+    fun migrations_registerTheV44ToV45Step() {
+        assertTrue(Migrations.ALL.any { it.startVersion == 44 && it.endVersion == 45 })
+    }
+
+    @Test
+    fun migrations_registerTheV43ToV44Step() {
+        assertTrue(Migrations.ALL.any { it.startVersion == 43 && it.endVersion == 44 })
+    }
+
+    @Test
+    fun migrations_registerTheV42ToV43Step() {
+        assertTrue(Migrations.ALL.any { it.startVersion == 42 && it.endVersion == 43 })
+    }
+
+    @Test
+    fun migrations_registerTheV41ToV42Step() {
+        assertTrue(Migrations.ALL.any { it.startVersion == 41 && it.endVersion == 42 })
+    }
+
+    @Test
     fun migrate_v2_through_v4_chain_appliesBothMigrations() {
         // Seed a pure v2 row.
         db.execSQL(

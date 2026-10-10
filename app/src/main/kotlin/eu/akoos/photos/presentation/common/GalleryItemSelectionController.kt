@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -71,6 +72,7 @@ import eu.akoos.photos.domain.usecase.DownloadPhotosUseCase
 import eu.akoos.photos.domain.usecase.ForceUploadLocalUrisUseCase
 import eu.akoos.photos.domain.usecase.InvalidateStrippedLocationsUseCase
 import eu.akoos.photos.presentation.util.formatBytes
+import eu.akoos.photos.util.AlbumListEventBus
 import eu.akoos.photos.util.ExifHelper
 import eu.akoos.photos.util.MetadataStripConfig
 import eu.akoos.photos.util.ProtonPhotosStorage
@@ -87,6 +89,19 @@ sealed class MultiStripState {
     data class Done(val stripped: Int, val skipped: Int) : MultiStripState()
     data class Failed(val message: String) : MultiStripState()
 }
+
+/** Progress of a share batch. [Working] counts the photos resolved so far, cloud originals
+ *  downloading one by one, so the Share button can ring while it takes no further taps. How the
+ *  batch ended is reported through the chooser and [GalleryItemSelectionController.actionFailure]. */
+sealed class SelectionShareState {
+    data object Idle : SelectionShareState()
+    data class Working(val done: Int, val total: Int) : SelectionShareState()
+}
+
+/** Whether a share press starts a batch: only over a non-empty selection and while no batch runs,
+ *  so a second tap during the downloads cannot start a second job and raise a second chooser. */
+internal fun shareStarts(selectedCount: Int, state: SelectionShareState): Boolean =
+    selectedCount > 0 && state is SelectionShareState.Idle
 
 /**
  * The multi-select action set shared by every [GalleryItem]-keyed grid (the timeline and search).
@@ -112,6 +127,7 @@ class GalleryItemSelectionController @AssistedInject constructor(
     private val undoController: UndoController,
     private val accountManager: AccountManager,
     private val favoriteWriter: FavoriteWriter,
+    private val albumListEvents: AlbumListEventBus,
     @ApplicationContext private val context: Context,
 ) {
     @AssistedFactory
@@ -135,7 +151,13 @@ class GalleryItemSelectionController @AssistedInject constructor(
     val albums: StateFlow<List<Album>> = _albums.asStateFlow()
 
     init {
-        scope.launch { runCatching { driveRepo.loadAlbumsCached() }.onSuccess { _albums.value = it } }
+        // Follows the cached album rows, so an album made or refreshed anywhere shows in the picker
+        // without a visit to the Albums tab.
+        scope.launch {
+            driveRepo.observeAlbumsCached()
+                .catch { Log.w(TAG, "album list stream failed: ${it.message}") }
+                .collect { _albums.value = it }
+        }
     }
 
     // ── One-shot results the screen consumes ────────────────────────────────────────────────────
@@ -224,15 +246,20 @@ class GalleryItemSelectionController @AssistedInject constructor(
     }
 
     // ── Share ───────────────────────────────────────────────────────────────────────────────────
+    private val _shareState = MutableStateFlow<SelectionShareState>(SelectionShareState.Idle)
+    val shareState: StateFlow<SelectionShareState> = _shareState.asStateFlow()
+
     fun shareSelected() {
         val items = selection.value.toList()
-        if (items.isEmpty()) return
+        if (!shareStarts(items.size, _shareState.value)) return
+        // Claimed before the launch, so a tap landing before the coroutine first runs finds it taken.
+        _shareState.value = SelectionShareState.Working(0, items.size)
         scope.launch {
             val userId = accountManager.getPrimaryUserId().first()
             // Null when strip-on-share is off, so each resolved URI passes through untouched below.
             val stripConfig = currentShareStripConfig(context)
             val uris = ArrayList<Uri>(items.size)
-            for (item in items) {
+            for ((index, item) in items.withIndex()) {
                 runCatching {
                     val resolved = when (item) {
                         is GalleryItem.LocalOnly -> Uri.parse(item.local.uri)
@@ -251,6 +278,7 @@ class GalleryItemSelectionController @AssistedInject constructor(
                     stripForShareOrOriginal(context, resolved, mime, name, stripConfig)
                 }.onSuccess { uris.add(it) }
                     .onFailure { Log.w(TAG, "share resolve failed: ${it.message}") }
+                _shareState.value = SelectionShareState.Working(index + 1, items.size)
             }
             if (uris.isNotEmpty()) {
                 val mime = ShareIntentBuilder.shareableMime(items)
@@ -260,6 +288,10 @@ class GalleryItemSelectionController @AssistedInject constructor(
             shareOutcome(shared = uris.size, failed = items.size - uris.size).message()
                 ?.let { _actionFailure.tryEmit(it.resolve(context)) }
             selection.clear()
+        }.invokeOnCompletion {
+            // The button is guarded on this state, so it is released however the batch ends: done,
+            // thrown or cancelled. Otherwise Share would stay dead for the rest of the session.
+            _shareState.value = SelectionShareState.Idle
         }
     }
 
@@ -270,6 +302,7 @@ class GalleryItemSelectionController @AssistedInject constructor(
         scope.launch {
             val userId = accountManager.getPrimaryUserId().first() ?: return@launch onResult(0, 0)
             val (joined, queued) = addItemsToAlbum(userId, albumLinkId, items)
+            if (joined > 0) albumListEvents.notifyChanged()
             selection.clear()
             onResult(joined, queued)
         }
@@ -301,6 +334,11 @@ class GalleryItemSelectionController @AssistedInject constructor(
             val (joined, queued) = addItemsToAlbum(userId, albumLinkId, items)
             selection.clear()
             onResult(joined, queued, null)
+            // The refresh writes the new album into the cached list the picker and the Albums page
+            // read, so both show it at once; the notice makes the open Albums page reload too.
+            runCatching { driveRepo.loadAlbums(userId) }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            albumListEvents.notifyChanged()
         }
     }
 
@@ -507,8 +545,9 @@ class GalleryItemSelectionController @AssistedInject constructor(
                     is DeletePhotoUseCase.Result.Success -> {
                         // No system-trash dialog was needed, so device copies were untouched or removed
                         // permanently (pre-R): only a cloud trash is reversible, localRecoverable = false.
-                        buildDeleteUndoAction(items, freeUpSpace, deleteFromCloud, hide = false, localRecoverable = false)
+                        buildDeleteUndoAction(result.landed(items), freeUpSpace, deleteFromCloud, hide = false, localRecoverable = false)
                             ?.let { undoController.offer(it) }
+                        reportKeptOnDevice(result)
                         selection.clear()
                     }
                     is DeletePhotoUseCase.Result.NeedsMediaWritePermission -> {
@@ -691,55 +730,79 @@ class GalleryItemSelectionController @AssistedInject constructor(
         scope.launch {
             if (pending != null) {
                 // A local (device) delete/hide finishes without an account; the use case guards its
-                // own cloud branch. run {} instead of an if-null so a guest's confirmed action commits.
+                // own cloud branch, so a guest's confirmed action commits.
                 val userId = accountManager.getPrimaryUserId().first()
-                run {
-                    // The refusal comes back as an answer rather than an exception, so it was
-                    // being dropped: the device file had gone, the Drive copy had not, and the
-                    // screen said nothing at all. The timeline surface already reports this.
-                    val cloudResult = deletePhotoUseCase.completeAfterPermissionGranted(
-                        userId = userId,
-                        cloudLinkIds = pending.cloudLinkIds,
-                        items = pending.itemsBeingDeleted,
-                        freeUpSpace = pending.freeUpSpace,
-                        hide = pending.hide,
-                    )
-                    if (cloudResult is DeletePhotoUseCase.Result.CloudDeleteFailed) {
-                        _actionFailure.tryEmit(context.getString(R.string.viewer_delete_drive_failed))
-                    }
-                    // Snapshot both halves of the hide before commit clears them, then offer Undo for
-                    // whichever reversible action landed.
-                    val hideUris = pendingHidePrivateUris
-                    val hideCloudIds = pendingHideCloudLinkIds
-                    pendingHideCloudLinkIds = emptyList()
-                    if (pending.hide) {
-                        commitPendingHide()
-                        reportHideFailures()
-                    }
-                    val undo: UndoAction? = when {
-                        pending.hide && hideUris.isNotEmpty() -> buildHideUndoAction(hideUris, hideCloudIds)
-                        !pending.hide ->
-                            // The system trash keeps the local files for ~30 days, so a confirmed delete
-                            // (cloud and/or device) is reversible: localRecoverable = true.
-                            buildDeleteUndoAction(
-                                pending.itemsBeingDeleted,
-                                pending.freeUpSpace,
-                                deleteFromCloud = pending.cloudLinkIds.isNotEmpty(),
-                                hide = false,
-                                localRecoverable = true,
-                            )
-                        else -> null
-                    }
-                    if (undo != null) undoController.offer(undo)
+                // The refusal comes back as an answer rather than an exception, so it was
+                // being dropped: the device file had gone, the Drive copy had not, and the
+                // screen said nothing at all. The timeline surface already reports this.
+                val cloudResult = deletePhotoUseCase.completeAfterPermissionGranted(userId, pending)
+                if (cloudResult is DeletePhotoUseCase.Result.NeedsMediaWritePermission) {
+                    // The next chunk of a delete too large for one request, launched like the first.
+                    pendingPermissionResult = cloudResult
+                    _pendingDeleteIntent.value = cloudResult.pendingIntent
+                    return@launch
                 }
+                if (cloudResult is DeletePhotoUseCase.Result.CloudDeleteFailed) {
+                    _actionFailure.tryEmit(context.getString(R.string.viewer_delete_drive_failed))
+                }
+                if (cloudResult is DeletePhotoUseCase.Result.Success && !pending.hide) reportKeptOnDevice(cloudResult)
+                finishConfirmedDelete(pending, pending.confirmedItems)
             }
             selection.clear()
         }
     }
 
+    /** Settle a delete or hide whose system dialog was confirmed, for the [carriedOut] items it took. */
+    private suspend fun finishConfirmedDelete(
+        pending: DeletePhotoUseCase.Result.NeedsMediaWritePermission,
+        carriedOut: List<GalleryItem>,
+    ) {
+        // Snapshot both halves of the hide before commit clears them, then offer Undo for
+        // whichever reversible action landed. The commit returns any photo whose original is
+        // still on the device to view.
+        val hideUris = pendingHidePrivateUris
+        val hideCloudIds = pendingHideCloudLinkIds
+        pendingHideCloudLinkIds = emptyList()
+        if (pending.hide) {
+            commitPendingHide()
+            reportHideFailures()
+        }
+        val undo: UndoAction? = when {
+            pending.hide && hideUris.isNotEmpty() -> buildHideUndoAction(hideUris, hideCloudIds)
+            !pending.hide ->
+                // The system trash keeps the local files for ~30 days, so a confirmed delete
+                // (cloud and/or device) is reversible: localRecoverable = true.
+                buildDeleteUndoAction(
+                    carriedOut,
+                    pending.freeUpSpace,
+                    deleteFromCloud = pending.deleteFromCloud,
+                    hide = false,
+                    localRecoverable = true,
+                )
+            else -> null
+        }
+        if (undo != null) undoController.offer(undo)
+    }
+
+    /** Say so when a delete left device files in place, which only Android 10 and older do. */
+    private fun reportKeptOnDevice(result: DeletePhotoUseCase.Result.Success) {
+        if (result.keptOnDevice.isEmpty()) return
+        _actionFailure.tryEmit(context.getString(R.string.album_delete_photos_failed))
+    }
+
+    /** A later chunk of a large delete declined leaves the chunks before it carried out, so those
+     *  finish as a landed delete; otherwise nothing happened and a pending hide rolls back. */
     fun clearPendingDeleteIntent() {
+        val pending = pendingPermissionResult
         pendingPermissionResult = null
         _pendingDeleteIntent.value = null
+        if (pending != null && pending.done.isNotEmpty()) {
+            scope.launch {
+                finishConfirmedDelete(pending, pending.done)
+                selection.clear()
+            }
+            return
+        }
         rollbackPendingHide()
     }
 

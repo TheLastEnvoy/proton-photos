@@ -47,10 +47,26 @@ import eu.akoos.photos.domain.entity.GalleryItem
 import eu.akoos.photos.domain.usecase.GetGalleryItemsUseCase
 import eu.akoos.photos.service.SemanticIndexingService
 import eu.akoos.photos.util.DeviceHealthPolicy
+import eu.akoos.photos.util.GuardedSessionHolder
+import eu.akoos.photos.util.MlAbandonCap
 import eu.akoos.photos.util.MlRail
 import eu.akoos.photos.util.MlWalkGate
 import eu.akoos.photos.util.NetworkObserver
+import eu.akoos.photos.util.SOURCE_RETRIES_PER_PASS
 import eu.akoos.photos.util.SemanticDiagnostics
+import eu.akoos.photos.util.SessionLease
+import eu.akoos.photos.util.SourceMiss
+import eu.akoos.photos.util.SourceMissNote
+import eu.akoos.photos.util.SourcePassTally
+import eu.akoos.photos.util.SourceRetryBook
+import eu.akoos.photos.util.WalkRestart
+import eu.akoos.photos.util.WalkRetryKick
+import eu.akoos.photos.util.boundedDetachedRun
+import eu.akoos.photos.util.retryKickDelayMs
+import eu.akoos.photos.util.settledLocalMiss
+import eu.akoos.photos.util.sourceMissForDownloadFailure
+import eu.akoos.photos.util.sourceMissForUndecodedDownload
+import eu.akoos.photos.util.sourceMissForUndecodedLocal
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +87,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import me.proton.core.accountmanager.domain.AccountManager
 import me.proton.core.domain.entity.UserId
 import java.io.File
 import java.nio.ByteBuffer
@@ -78,6 +95,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -150,15 +168,46 @@ private fun settledSemanticLabel(indexedCount: Int): SemanticStatusLabel =
 
 /**
  * Whether a photo whose source failed to load should be recorded embedded (a zero-vector tombstone the
- * search ranks at similarity 0, so a re-run skips it) rather than left pending. A device item that
- * yields no bitmap is a corrupt or unsupported local file with no cloud original to retry, so it is
- * tombstoned. A cloud item is tombstoned only when its load wedged past a decode or decrypt watchdog (a
- * deterministic hang that would re-wedge next pass); a plain defer (off Wi-Fi, out of budget) or a
- * transient download timeout leaves it pending for a later retry. Pure so it is unit-tested without
- * Android; a copy of the face walk's rule so the semantic rail does not depend on the face file.
+ * search ranks at similarity 0, so a re-run skips it) rather than left pending. It is tombstoned when its
+ * load wedged past a decode or decrypt watchdog (a deterministic hang that would re-wedge next pass), or
+ * when the load reported a [SourceMiss.PERMANENT] miss: a cloud link, its keys or its revision gone, or
+ * an original (cloud or device) the decoder cannot read. Any other [miss] (off Wi-Fi, out of budget, a
+ * device file that could not be opened, a transient failure) leaves it pending for a later retry. Pure
+ * so it is unit-tested without Android; a copy of the face walk's rule so the semantic rail does not
+ * depend on the face file.
  */
-internal fun shouldTombstoneOnNullSource(isLocalOnly: Boolean, loadTimedOut: Boolean): Boolean =
-    isLocalOnly || loadTimedOut
+internal fun shouldTombstoneOnNullSource(loadTimedOut: Boolean, miss: SourceMiss): Boolean =
+    loadTimedOut || miss == SourceMiss.PERMANENT
+
+/**
+ * The (device key, cloud key) pairs whose embedding has to follow a photo backed up after it was
+ * embedded: every Synced item whose device content URI still holds a row, paired with the linkId the
+ * item is keyed by now. A cloud key that already holds a row is not filtered out, unlike the face
+ * walk's pairing: [ImageEmbeddingDao.rekeyPhotos] keeps that row and drops the device one, so no
+ * device-keyed row is left behind. A guest lists no Synced item, so a guest never pairs anything.
+ * Pure so the walk's filter is unit-tested without a database.
+ */
+internal fun semanticRekeyPairs(
+    items: List<GalleryItem>,
+    embeddedKeys: Set<String>,
+): List<Pair<String, String>> =
+    items.asSequence()
+        .filterIsInstance<GalleryItem.Synced>()
+        .map { it.local.uri to it.cloud.linkId }
+        .filter { (oldKey, newKey) -> oldKey != newKey && oldKey in embeddedKeys }
+        .toList()
+
+/**
+ * Mirrors a landed backup re-key into the walk's skip set: each device key no longer holds a row and
+ * each cloud key does (moved there, or kept there), so the Synced photo reads as embedded and is not
+ * queued for a second embedding.
+ */
+internal fun MutableSet<String>.applyRekeyPairs(pairs: List<Pair<String, String>>) {
+    for ((oldKey, newKey) in pairs) {
+        remove(oldKey)
+        add(newKey)
+    }
+}
 
 /**
  * Walks the whole library once and stores one CLIP image embedding per photo, in the background, only
@@ -171,11 +220,14 @@ internal fun shouldTombstoneOnNullSource(isLocalOnly: Boolean, loadTimedOut: Boo
  * photos it has never looked at. A read error on one photo skips that photo and never aborts the walk.
  *
  * Photo identity is [GalleryItem.stableId] (a cloud linkId or a device content URI), stored on each
- * [ImageEmbeddingEntity.photoKey], so a search hit joins straight back to the timeline. The row's
- * presence is the scan marker: a successful embed writes the real vector, a decode-unloadable photo
- * writes a zero-vector tombstone so it is not re-decoded every pass, and a photo that only failed
- * transiently (off Wi-Fi, out of budget, a slow download, or an inference wedge) writes nothing and
- * stays pending for a later trigger.
+ * [ImageEmbeddingEntity.photoKey], so a search hit joins straight back to the timeline. A device photo
+ * embedded under its content URI and backed up since keeps its vector: the start of the next walk
+ * moves the row to the linkId its Synced item now carries, so the photo is not embedded twice. The row's
+ * presence is the scan marker: a successful embed writes the real vector, a decode-unloadable photo or
+ * one whose cloud original is permanently unavailable writes a zero-vector tombstone so it is not
+ * fetched or re-decoded every pass, and a photo that only failed transiently (a failed or slow download,
+ * or an inference wedge) writes nothing and waits out a retry backoff, as a deferred one (off Wi-Fi, out
+ * of budget) waits for a later pass.
  *
  * Memory is the hard constraint. Only bounded bitmaps are decoded (long edge ~[SOURCE_MAX_EDGE]), each
  * is recycled at once, the worker pool is tiny, and the single ONNX session is serialised through
@@ -201,9 +253,23 @@ class SemanticIndexingScheduler @Inject constructor(
     private val galleryItemsProvider: Provider<GetGalleryItemsUseCase>,
     private val deviceHealth: DeviceHealthPolicy,
     private val mlWalkGate: MlWalkGate,
+    // Read only when a walk's tail is about to start another pass, to check the account is still signed in.
+    private val accountManager: Provider<AccountManager>,
 ) {
     /** Own scope so an unpause kick and the settings watcher outlive the caller that triggered them. */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Photos whose last load (or inference) failed transiently, each with its attempts and when it is due
+     *  again, so a pass tries never-tried photos first and a failing one waits out its backoff. In memory
+     *  only; dropped on [reset], so a rescan or a new account tries everything afresh. */
+    private val retryBook = SourceRetryBook()
+
+    /** The re-kick a settled walk leaves for its earliest waiting retry. */
+    private val retryKick = WalkRetryKick(scope)
+
+    /** Image-model sessions the watchdog has abandoned in this process; once it is reached the walk opens
+     *  no more until the next process. */
+    private val abandonCap = MlAbandonCap()
 
     private val semanticModelManager by lazy { SemanticModelManager(context) }
 
@@ -248,12 +314,10 @@ class SemanticIndexingScheduler @Inject constructor(
     /** Set by [reset] to stop a running walk promptly on sign-out; cleared at the start of each walk. */
     @Volatile private var stopRequested = false
 
-    /** A resume asked for while a walk was still winding down: the walk's own tail re-kicks a fresh one
-     *  when it lands, so a pause-then-resume never wedges with nothing running. */
-    @Volatile private var restartRequested = false
-
-    /** The last account a walk ran for, so an unpause can resume without being handed a userId. */
-    @Volatile private var lastUserId: UserId? = null
+    /** A resume asked for while a walk was still winding down, which the walk's own tail honours when it
+     *  lands so a pause-then-resume never wedges with nothing running, and the last account a walk ran for,
+     *  so an unpause can resume without being handed a userId. Both dropped by [reset]. */
+    private val restart = WalkRestart()
 
     private val _progress = MutableStateFlow(SemanticIndexingProgress(SemanticIndexingState.Idle, 0, 0))
     val progress: StateFlow<SemanticIndexingProgress> = _progress.asStateFlow()
@@ -286,7 +350,7 @@ class SemanticIndexingScheduler @Inject constructor(
             var wasUnmetered = networkObserver.isUnmetered.value
             networkObserver.isUnmetered.collect { nowUnmetered ->
                 if (shouldResumeSemanticScanOnUnmetered(wasUnmetered, nowUnmetered)) {
-                    lastUserId?.let { uid -> runCatching { indexAll(uid) } }
+                    restart.lastUserId?.let { uid -> runCatching { indexAll(uid) } }
                 }
                 wasUnmetered = nowUnmetered
             }
@@ -300,7 +364,7 @@ class SemanticIndexingScheduler @Inject constructor(
      * repeatedly; overlapping calls collapse to one walk.
      */
     suspend fun indexAll(userId: UserId?) {
-        lastUserId = userId
+        restart.lastUserId = userId
         val prefs = context.settingsDataStore.data.first()
         aiEnabled = prefs[SettingsKeys.AI_FEATURES_ENABLED] == true && prefs[SettingsKeys.SEMANTIC_ENABLED] == true
         fullresWifiOnly = prefs[SettingsKeys.FULLRES_WIFI_ONLY] ?: true
@@ -309,12 +373,17 @@ class SemanticIndexingScheduler @Inject constructor(
         if (paused) { _progress.value = SemanticIndexingProgress(SemanticIndexingState.Paused, 0, 0); return }
         // A walk is already running: ask the active walk to re-kick when it finishes, so a start requested
         // during a winding-down pass is never lost.
-        if (!running.compareAndSet(false, true)) { restartRequested = true; return }
+        if (!running.compareAndSet(false, true)) { restart.request(); return }
+        // This pass supersedes any re-kick an earlier settled pass left for its retries.
+        retryKick.cancel()
         stopRequested = false
         // Rows written (real vectors and tombstones) this pass. Each drains one pending item, so a pass
         // that writes any keeps the auto-continue going and a pass that writes none stops cleanly. Zero
-        // also means no progress (off Wi-Fi, or the budget could load nothing more).
+        // also means no progress (off Wi-Fi, every attempt failed transiently, or nothing is due).
         val embeddedThisPass = AtomicInteger(0)
+        // What this pass's loads came to: files each transient failure for a backoff, and counts the
+        // photos left over the download budget.
+        val tally = SourcePassTally(retryBook)
         try {
             val modelFile = semanticModelManager.imageModelFile()
             if (modelFile == null) {
@@ -335,6 +404,10 @@ class SemanticIndexingScheduler @Inject constructor(
             }.getOrDefault(emptyList())
             val alreadyScanned = runCatching { imageEmbeddingDao.scannedKeysForUser(account).toHashSet() }
                 .getOrDefault(HashSet())
+            // A device photo backed up to Drive re-appears as Synced under its cloud linkId: its
+            // embedding follows it there before the pending set is taken, instead of the walk
+            // embedding the photo a second time.
+            rekeyBackedUpPhotos(account, items, alreadyScanned)
             val pending = items.filter { it.stableId !in alreadyScanned }
             val total = pending.size
             // Progress is cumulative across the auto-continue passes, not per pass: the total is the whole
@@ -343,15 +416,25 @@ class SemanticIndexingScheduler @Inject constructor(
             val libraryTotal = items.size
             val scannedBefore = libraryTotal - total
             if (total == 0) {
+                retryBook.clear()
                 _progress.value = SemanticIndexingProgress(SemanticIndexingState.Done, libraryTotal, libraryTotal)
                 return
             }
+            // Never-tried photos go first, then at most SOURCE_RETRIES_PER_PASS of the retries that are due,
+            // so photos that keep failing can never take the pass's download budget from ones not yet
+            // tried; a retry not yet due sits this pass out.
+            val planned = retryBook.planPass(pending, { it.stableId }, SystemClock.elapsedRealtime(), SOURCE_RETRIES_PER_PASS).queue
+            // Once this process has abandoned its cap of sessions, the walk opens no more: the pass embeds
+            // nothing and settles until the next process resumes it.
+            val halted = abandonCap.reached()
+            if (halted) SemanticDiagnostics.recordAbandonedSessions(abandonCap.count(), halted = true)
+            val queue = if (halted) emptyList() else planned
             _progress.value = SemanticIndexingProgress(SemanticIndexingState.Running, scannedBefore, libraryTotal)
 
             // Host a large first pass in a foreground service so it survives the app being swiped from
             // Recents; the service only reports progress and re-triggers, the walk and all gating stay
             // here. A redundant start on the already-running service is a no-op.
-            if (total >= SEMANTIC_INDEX_FOREGROUND_THRESHOLD) {
+            if (queue.size >= SEMANTIC_INDEX_FOREGROUND_THRESHOLD) {
                 SemanticIndexingService.start(context, userId)
             }
 
@@ -366,13 +449,15 @@ class SemanticIndexingScheduler @Inject constructor(
             val passStart = SystemClock.elapsedRealtime()
             // Hold the shared model gate for the session-resident window, so a face walk's ONNX sessions
             // and this CLIP session are never both loaded at once (the large-heap OOM risk). Taken after
-            // the pending set is computed and released the moment the session is closed.
-            mlWalkGate.acquire(MlRail.SEMANTIC)
+            // the pending set is computed and released the moment the session is closed. A pass with
+            // nothing due (every pending photo waiting out a backoff) loads no model and waits on no gate.
+            val gated = queue.isNotEmpty()
+            if (gated) mlWalkGate.acquire(MlRail.SEMANTIC)
             try {
                 coroutineScope {
                     repeat(WORKER_COUNT) {
                         launch {
-                            while (active()) {
+                            while (active() && !abandonCap.reached()) {
                                 // Gate the walk on the physical/power tier only, not interaction, matching
                                 // the face walk: the scan runs serialized on background threads, so viewing
                                 // a screen never freezes it. Poll so a pause or sign-out still stops the walk
@@ -385,18 +470,21 @@ class SemanticIndexingScheduler @Inject constructor(
                                 }
                                 if (!active()) break
                                 val i = cursor.getAndIncrement()
-                                if (i >= total) break
-                                val item = pending[i]
+                                if (i >= queue.size) break
+                                val item = queue[i]
                                 try {
-                                    indexOne(item, userId, ml, decryptBudget, embeddedThisPass)
+                                    indexOne(item, userId, ml, decryptBudget, embeddedThisPass, tally)
                                 } catch (e: kotlinx.coroutines.CancellationException) {
                                     throw e
                                 } catch (e: Throwable) {
                                     SemanticDiagnostics.recordEmbedFailure()
+                                    // A photo whose embed threw waits out a backoff like any transient failure,
+                                    // rather than heading the next pass again.
+                                    tally.stayed(item.stableId, SourceMiss.TRANSIENT, SystemClock.elapsedRealtime())
                                     Log.w(TAG, "index ${item.stableId} failed: ${e.message}")
                                 }
                                 val done = processed.incrementAndGet()
-                                if (done % PROGRESS_STRIDE == 0 || done >= total) {
+                                if (done % PROGRESS_STRIDE == 0 || done >= queue.size) {
                                     _progress.value = SemanticIndexingProgress(
                                         if (active()) SemanticIndexingState.Running else SemanticIndexingState.Paused,
                                         scannedBefore + embeddedThisPass.get(),
@@ -408,12 +496,14 @@ class SemanticIndexingScheduler @Inject constructor(
                     }
                 }
             } finally {
-                // Closes only the live session; an abandoned (timed-out) one was already dropped and is
-                // never closed here, so no session is freed while a wedged native call still uses it.
+                // Retires the live session: closed now when idle, else once the run a cancelled worker left
+                // in flight returns. An abandoned one closes itself when its wedged run ends, so no session
+                // is freed while a native call still uses it.
                 ml.close()
-                mlWalkGate.release(MlRail.SEMANTIC)
+                if (gated) mlWalkGate.release(MlRail.SEMANTIC)
             }
             SemanticDiagnostics.recordPass(embeddedThisPass.get(), SystemClock.elapsedRealtime() - passStart)
+            SemanticDiagnostics.recordSourceBacklog(transientWaiting = retryBook.size(), overBudget = tally.overBudget)
 
             val indexedNow = scannedBefore + embeddedThisPass.get()
             _progress.value = when {
@@ -423,12 +513,13 @@ class SemanticIndexingScheduler @Inject constructor(
                 paused || stopRequested -> SemanticIndexingProgress(SemanticIndexingState.Paused, indexedNow, libraryTotal)
                 // A re-kick is coming (this pass wrote a row, or a restart is already queued), so stay
                 // Running to match the tail re-kick below and not flap the foreground service.
-                embeddedThisPass.get() > 0 || restartRequested -> SemanticIndexingProgress(SemanticIndexingState.Running, indexedNow, libraryTotal)
+                embeddedThisPass.get() > 0 || restart.isRequested() -> SemanticIndexingProgress(SemanticIndexingState.Running, indexedNow, libraryTotal)
                 // A full pass that embedded nothing and is not paused means the remainder can't be
-                // processed right now (deferred off Wi-Fi, or a few undecodable / low-memory cloud items).
-                // There is no re-kick in that case, so settle to Idle rather than leave a Running spinner
-                // that reads as "scanning forever, stuck at N of M". The pending items stay pending and are
-                // retried on the next trigger (Wi-Fi returns, app relaunch, new photos).
+                // processed right now (deferred off Wi-Fi, every attempt failed transiently, or every photo
+                // left waits out a retry backoff). There is no immediate re-kick in that case, so settle to
+                // Idle rather than leave a Running spinner that reads as "scanning forever, stuck at N of M".
+                // The pending items stay pending: the tail re-kicks once the earliest retry is due, and any
+                // other trigger (Wi-Fi returns, app relaunch, new photos) retries.
                 else -> SemanticIndexingProgress(SemanticIndexingState.Idle, indexedNow, libraryTotal)
             }
         } finally {
@@ -436,13 +527,28 @@ class SemanticIndexingScheduler @Inject constructor(
             // Auto-continue: a full-res walk only downloads a bounded batch per pass, so keep going until
             // the library is drained. A pending resume always re-kicks; otherwise re-kick only while the
             // walk is still permitted and wrote at least one row, which stops cleanly at Done, off Wi-Fi,
-            // or on pause.
-            val resume = restartRequested
-            restartRequested = false
+            // or on pause. A walk that settles with retries still waiting comes back when the earliest is
+            // due. A resume is for the account last asked for, a continuation for this walk's own, and either
+            // starts only while that account is still the one signed in ([restartIfCurrent]).
+            val resume = restart.take()
             if (resume || (active() && embeddedThisPass.get() > 0)) {
-                scope.launch { runCatching { indexAll(userId) } }
+                val next = if (resume) restart.lastUserId else userId
+                scope.launch { restartIfCurrent(next) }
+            } else if (active() && !abandonCap.reached()) {
+                val now = SystemClock.elapsedRealtime()
+                retryKickDelayMs(retryBook.nextDueAfter(now), now)?.let { wait ->
+                    retryKick.schedule(wait) { restartIfCurrent(userId) }
+                }
             }
         }
+    }
+
+    /** Starts the pass a walk's tail owes [userId], only while it is still the account last asked for and
+     *  still the signed-in one, or the guest while none is ([WalkRestart.mayRestart]). An account read that
+     *  fails starts nothing. */
+    private suspend fun restartIfCurrent(userId: UserId?) {
+        val primary = runCatching { accountManager.get().getPrimaryUserId().first() }.getOrElse { return }
+        if (restart.mayRestart(userId, primary)) runCatching { indexAll(userId) }
     }
 
     /**
@@ -457,7 +563,7 @@ class SemanticIndexingScheduler @Inject constructor(
             }
         } else {
             stopRequested = false
-            lastUserId?.let { uid -> scope.launch { runCatching { indexAll(uid) } } }
+            restart.lastUserId?.let { uid -> scope.launch { runCatching { indexAll(uid) } } }
         }
     }
 
@@ -471,7 +577,7 @@ class SemanticIndexingScheduler @Inject constructor(
             paused = false
             stopRequested = false
             // If a walk is still winding down, let its tail re-kick a fresh one rather than no-op here.
-            restartRequested = true
+            restart.request()
             runCatching { indexAll(userId) }
         }
     }
@@ -479,11 +585,14 @@ class SemanticIndexingScheduler @Inject constructor(
     /**
      * Stop any running walk and drop this account's embeddings. Called on sign-out just as the other
      * per-account rows are wiped: image embeddings are private derived data, so they leave with the
-     * session rather than lingering for the next account.
+     * session rather than lingering for the next account. A restart held for the walk's tail goes too, so
+     * that tail starts no pass for the account that is leaving.
      */
     suspend fun reset(userId: UserId?) {
         stopRequested = true
-        lastUserId = null
+        retryKick.cancel()
+        retryBook.clear()
+        restart.reset()
         _progress.value = SemanticIndexingProgress(SemanticIndexingState.Idle, 0, 0)
         SemanticDiagnostics.clear()
         runCatching { imageEmbeddingDao.deleteAllForUser(userId?.id ?: PhotoLocationEntity.LOCAL_USER) }
@@ -492,11 +601,12 @@ class SemanticIndexingScheduler @Inject constructor(
 
     /**
      * Embed one photo and write its row. A source that loaded is encoded under [mlLock] and its vector
-     * stored. A source that never loaded is tombstoned only when it is decode-unloadable (a corrupt local
-     * file or a deterministic decode/decrypt wedge), so it is skipped next pass; a transient miss (off
-     * Wi-Fi, out of budget, a slow download) writes nothing and stays pending. An inference that wedges
-     * past the watchdog abandons the session and also leaves the photo pending. Bounded source in,
-     * recycled on the way out.
+     * stored. A source that never loaded is tombstoned only when it will not load next pass either (a
+     * corrupt local file, a deterministic decode/decrypt wedge, or a cloud original permanently
+     * unavailable), so it is skipped next pass; a transient miss (a failed or slow download) writes
+     * nothing and waits out a backoff, and a defer (off Wi-Fi, out of budget) stays pending. An inference
+     * that wedges past the watchdog abandons the session and also waits out a backoff. [tally] learns
+     * what the load came to. Bounded source in, recycled on the way out.
      */
     private suspend fun indexOne(
         item: GalleryItem,
@@ -504,29 +614,50 @@ class SemanticIndexingScheduler @Inject constructor(
         ml: SemanticMl,
         decryptBudget: AtomicInteger,
         embeddedThisPass: AtomicInteger,
+        tally: SourcePassTally,
     ) {
         if (!active()) return
         // Background semantic indexing yields the process-global crypto gate to interactive decrypts.
         withContext(DecryptPriorityContext(DecryptPriority.BACKGROUND)) {
             val photoKey = item.stableId
             val loadTimedOut = AtomicBoolean(false)
-            val source = loadSource(item, userId, decryptBudget, loadTimedOut) ?: run {
-                // No source this pass. A device-only item, or one whose decode/decrypt wedged past its
-                // watchdog, will not load next pass either, so tombstone it rather than re-decode it every
-                // pass. A cloud item deferred off Wi-Fi or out of budget, and a transient download timeout
-                // (kept off loadTimedOut), stay pending for a later pass.
-                if (shouldTombstoneOnNullSource(item is GalleryItem.LocalOnly, loadTimedOut.get())) {
+            val missNote = SourceMissNote()
+            val source = loadSource(item, userId, decryptBudget, loadTimedOut, missNote) ?: run {
+                // No source this pass. A device file that opens but will not decode, one whose
+                // decode/decrypt wedged past its watchdog, or a cloud item the load reports permanently
+                // unavailable, will not load next pass either, so tombstone it rather than fetch or
+                // re-decode it every pass. A transient failure (a device file that could not be opened, a
+                // download timeout kept off loadTimedOut) waits out a backoff; a cloud item deferred off
+                // Wi-Fi or out of budget stays pending for a later pass.
+                val miss = missNote.reason.let {
+                    if (item is GalleryItem.LocalOnly) settledLocalMiss(it, tally.attempts(photoKey)) else it
+                }
+                if (shouldTombstoneOnNullSource(loadTimedOut.get(), miss)) {
+                    val permanent = item !is GalleryItem.LocalOnly && miss == SourceMiss.PERMANENT
+                    if (permanent) SemanticDiagnostics.recordPermanentSkip()
+                    tally.movedOn(photoKey, permanent)
                     writeRow(account(userId), photoKey, tombstoneBlob, embeddedThisPass)
+                } else {
+                    tally.stayed(photoKey, miss, SystemClock.elapsedRealtime())
                 }
                 return@withContext
             }
             // Bound the native inference: one wedged ONNX run must not pin the shared lock and freeze every
             // worker. On a timeout control returns here, mlLock releases, the wedged session is ABANDONED
-            // (never closed under a live native call), and the next item opens a fresh one. The detached
+            // (closed only once that native call returns), and the next item opens a fresh one. The detached
             // block owns [source] and recycles it in its own finally, so a leaked run keeps a valid bitmap.
             val vector = mlLock.withLock {
-                val encoder = ml.encoder()
-                val completed = boundedRun(ML_TIMEOUT_MS, mlDispatcher) {
+                // A photo that waited here while the process abandoned its cap of sessions opens no new one:
+                // it stays pending for the next process.
+                if (abandonCap.reached()) {
+                    if (!source.isRecycled) source.recycle()
+                    return@withContext
+                }
+                // The lease is released when the detached run ends, so the session is never closed under
+                // it, even once the walk is cancelled mid-run.
+                val lease = ml.beginRun()
+                val encoder = lease.value
+                val completed = boundedRun(ML_TIMEOUT_MS, mlDispatcher, onRunEnd = lease.release) {
                     try {
                         encoder.encode(source)
                     } finally {
@@ -536,12 +667,19 @@ class SemanticIndexingScheduler @Inject constructor(
                 if (completed == null) {
                     SemanticDiagnostics.recordWatchdogTimeout()
                     ml.abandon()
+                    val count = abandonCap.recordAbandon()
+                    SemanticDiagnostics.recordAbandonedSessions(count, halted = abandonCap.reached())
+                    if (abandonCap.reached()) Log.w(TAG, "$count sessions abandoned, background index stops until the next start")
                 }
                 completed
             }
-            // A wedged inference is a transient hard failure: leave the photo pending so a later trigger
-            // retries it, rather than tombstoning a photo that may embed cleanly next time.
-            if (vector == null) return@withContext
+            // A wedged inference is a transient hard failure: the photo waits out a backoff and is retried,
+            // rather than tombstoned when it may embed cleanly next time.
+            if (vector == null) {
+                tally.stayed(photoKey, SourceMiss.TRANSIENT, SystemClock.elapsedRealtime())
+                return@withContext
+            }
+            tally.movedOn(photoKey)
             writeRow(account(userId), photoKey, packEmbedding(vector), embeddedThisPass)
         }
     }
@@ -565,24 +703,45 @@ class SemanticIndexingScheduler @Inject constructor(
     private fun account(userId: UserId?): String = userId?.id ?: PhotoLocationEntity.LOCAL_USER
 
     /**
+     * Moves each backed-up photo's embedding from the device content URI it was embedded under to the
+     * linkId its Synced item now carries, then mirrors that into [embeddedKeys] so the pending set sees
+     * the photo as embedded. When the linkId already holds a row, that row is kept and the URI row is
+     * dropped. A zero-vector tombstone moves too, so a device file that would not decode is not fetched
+     * again from the cloud every pass once it is backed up. A failure is logged and never stops the
+     * walk; the next walk derives the pairs afresh from the table.
+     */
+    private suspend fun rekeyBackedUpPhotos(
+        account: String,
+        items: List<GalleryItem>,
+        embeddedKeys: MutableSet<String>,
+    ) {
+        val pairs = semanticRekeyPairs(items, embeddedKeys)
+        if (pairs.isEmpty()) return
+        runCatching { imageEmbeddingDao.rekeyPhotos(account, pairs) }
+            .onSuccess { embeddedKeys.applyRekeyPairs(pairs) }
+            .onFailure { Log.w(TAG, "embedding rekey on backup failed: ${it.message}") }
+    }
+
+    /**
      * A bounded source bitmap for [item]. A device file (LocalOnly, or the local twin of a Synced pair)
      * is decoded straight off the local original with no crypto. A cloud photo is embedded from its
      * full-resolution image on Wi-Fi (downloaded, decoded bounded, then deleted right away); off Wi-Fi or
      * once the per-pass budget is spent it returns null so the photo is deferred. A cloud video falls back
-     * to its still-frame thumbnail, the only bitmap a video container yields.
+     * to its still-frame thumbnail, the only bitmap a video container yields. A cloud load that returns
+     * null notes why in [miss].
      */
     private suspend fun loadSource(
         item: GalleryItem,
         userId: UserId?,
         decryptBudget: AtomicInteger,
         timedOut: AtomicBoolean,
+        miss: SourceMissNote,
     ): Bitmap? = when (item) {
-        is GalleryItem.LocalOnly -> decodeLocalBounded(item.local.uri, timedOut)
-            ?: decodeLocalVideoFrame(item.local.uri)
+        is GalleryItem.LocalOnly -> loadLocalOnly(item.local.uri, timedOut, miss)
         is GalleryItem.Synced -> decodeLocalBounded(item.local.uri, timedOut)
             ?: decodeLocalVideoFrame(item.local.uri)
-            ?: userId?.let { decodeCloud(item.cloud, it, decryptBudget, timedOut) }
-        is GalleryItem.CloudOnly -> userId?.let { decodeCloud(item.cloud, it, decryptBudget, timedOut) }
+            ?: userId?.let { decodeCloud(item.cloud, it, decryptBudget, timedOut, miss) }
+        is GalleryItem.CloudOnly -> userId?.let { decodeCloud(item.cloud, it, decryptBudget, timedOut, miss) }
     }
 
     /**
@@ -626,35 +785,42 @@ class SemanticIndexingScheduler @Inject constructor(
         userId: UserId,
         decryptBudget: AtomicInteger,
         timedOut: AtomicBoolean,
+        miss: SourceMissNote,
     ): Bitmap? =
-        if (photo.mimeType.startsWith("video/")) decodeCloudBounded(photo.linkId, userId, decryptBudget, timedOut)
-        else decodeCloudFullRes(photo, userId, decryptBudget, timedOut)
+        if (photo.mimeType.startsWith("video/")) decodeCloudBounded(photo.linkId, userId, decryptBudget, timedOut, miss)
+        else decodeCloudFullRes(photo, userId, decryptBudget, timedOut, miss)
 
     /**
      * Embed a cloud image from its full-resolution bytes. On Wi-Fi and while the per-pass budget allows,
      * the same download+decrypt the viewer uses writes the file into the `fullres` cache; it is decoded
      * bounded and then deleted right away, so the library is never stored. Off Wi-Fi, out of budget, or on
      * a download failure it returns null and the photo waits for a later pass. The download is serialised
-     * through [downloadLock] and spends one unit of the shared per-pass budget.
+     * through [downloadLock] and spends one unit of the shared per-pass budget. A null return notes why in
+     * [miss]: a download the service reports unavailable, or an original the decoder cannot read, is
+     * permanent; any other failure is transient.
      */
     private suspend fun decodeCloudFullRes(
         photo: CloudPhoto,
         userId: UserId,
         decryptBudget: AtomicInteger,
         timedOut: AtomicBoolean,
+        miss: SourceMissNote,
     ): Bitmap? {
         // Honour the user's "full-res on Wi-Fi only" setting: once it is off, the walk fetches cloud
         // full-res over mobile data too instead of stalling at the on-device photos off Wi-Fi.
-        if (fullresWifiOnly && !networkObserver.currentlyOnWifi()) return null
-        if (!takeBudget(decryptBudget)) return null
+        if (fullresWifiOnly && !networkObserver.currentlyOnWifi()) return miss.giveUp(SourceMiss.DEFERRED)
+        if (!takeBudget(decryptBudget)) return miss.giveUp(SourceMiss.OVER_BUDGET)
         // A download timeout is transient (a slow or stalled link), unlike a deterministic decode wedge: it
         // gets its own flag, kept off [timedOut], so the item is left pending for a later pass rather than
         // tombstoned. Only the decode below feeds [timedOut].
         val downloadTimedOut = AtomicBoolean(false)
+        val downloadError = AtomicReference<Throwable?>(null)
         val file = downloadLock.withPermit {
-            if (!active()) return null
+            if (!active()) return miss.giveUp(SourceMiss.DEFERRED)
             boundedRun(DOWNLOAD_TIMEOUT_MS, Dispatchers.IO, downloadTimedOut) {
-                val produced = runCatching { photoDownloadService.downloadFullResPhoto(userId, photo) }.getOrNull()
+                val produced = runCatching { photoDownloadService.downloadFullResPhoto(userId, photo) }
+                    .onFailure { downloadError.set(it) }
+                    .getOrNull()
                 // A download that lands after the watchdog gave up has no consumer, so delete it rather than
                 // leave an orphan in the fullres cache.
                 if (produced != null && downloadTimedOut.get()) {
@@ -664,20 +830,36 @@ class SemanticIndexingScheduler @Inject constructor(
                     produced
                 }
             }
-        } ?: return null
+        } ?: return miss.giveUp(sourceMissForDownloadFailure(downloadError.get()))
+        val unreadable = AtomicBoolean(false)
         return try {
-            decodeFileBounded(file, timedOut)
+            decodeFileBounded(file, timedOut, unreadable)
+                ?: miss.giveUp(sourceMissForUndecodedDownload(unreadable.get()))
         } finally {
             runCatching { file.delete() }
         }
     }
 
-    /** A bounded decode of a device file, run detached under a watchdog so a decode that wedges frees the
-     *  worker and flips [timedOut] rather than pinning it. */
-    private suspend fun decodeLocalBounded(uri: String, timedOut: AtomicBoolean): Bitmap? =
-        boundedRun(DECODE_TIMEOUT_MS, Dispatchers.IO, timedOut) { decodeLocalBlocking(uri) }
+    /** A device-only photo's source: the decoded image, else a video's still frame. When neither comes, the
+     *  miss says whether the file is unreadable for good or merely could not be read now. */
+    private suspend fun loadLocalOnly(uri: String, timedOut: AtomicBoolean, miss: SourceMissNote): Bitmap? {
+        val threw = AtomicBoolean(false)
+        return decodeLocalBounded(uri, timedOut, threw)
+            ?: decodeLocalVideoFrame(uri)
+            ?: miss.giveUp(sourceMissForUndecodedLocal(readable = isLocalReadable(uri), decodeThrew = threw.get()))
+    }
 
-    private fun decodeLocalBlocking(uri: String): Bitmap? = runCatching {
+    private suspend fun isLocalReadable(uri: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching { context.contentResolver.openInputStream(Uri.parse(uri))?.use { true } ?: false }
+            .getOrDefault(false)
+    }
+
+    /** A bounded decode of a device file, run detached under a watchdog so a decode that wedges frees the
+     *  worker and flips [timedOut] rather than pinning it. [threw] flips when the decode threw. */
+    private suspend fun decodeLocalBounded(uri: String, timedOut: AtomicBoolean, threw: AtomicBoolean? = null): Bitmap? =
+        boundedRun(DECODE_TIMEOUT_MS, Dispatchers.IO, timedOut) { decodeLocalBlocking(uri, threw) }
+
+    private fun decodeLocalBlocking(uri: String, threw: AtomicBoolean? = null): Bitmap? = runCatching {
         val u = Uri.parse(uri)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -693,23 +875,31 @@ class SemanticIndexingScheduler @Inject constructor(
             ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
         } ?: ExifInterface.ORIENTATION_NORMAL
         orientedBitmap(bmp, orientation)
-    }.getOrNull()
+    }.getOrElse { threw?.set(true); null }
 
     /** A bounded decode of a cache file, run detached under a watchdog so a decode that wedges frees the
-     *  worker and flips [timedOut] rather than pinning it. */
-    private suspend fun decodeFileBounded(file: File, timedOut: AtomicBoolean): Bitmap? =
-        boundedRun(DECODE_TIMEOUT_MS, Dispatchers.IO, timedOut) { decodeFileBlocking(file) }
+     *  worker and flips [timedOut] rather than pinning it. [unreadable] as for [decodeFileBlocking]. */
+    private suspend fun decodeFileBounded(file: File, timedOut: AtomicBoolean, unreadable: AtomicBoolean? = null): Bitmap? =
+        boundedRun(DECODE_TIMEOUT_MS, Dispatchers.IO, timedOut) { decodeFileBlocking(file, unreadable) }
 
-    private fun decodeFileBlocking(file: File): Bitmap? = runCatching {
+    /** Flips [unreadable] when the decoder read the file and could make no image of it (a format it does
+     *  not support, or corrupt bytes), as opposed to a decode that threw (out of memory) or a file gone. */
+    private fun decodeFileBlocking(file: File, unreadable: AtomicBoolean? = null): Bitmap? = runCatching {
         if (!file.exists() || file.length() <= 0L) return@runCatching null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            if (file.exists()) unreadable?.set(true)
+            return@runCatching null
+        }
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight)
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        val bmp = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return@runCatching null
+        val bmp = BitmapFactory.decodeFile(file.absolutePath, opts) ?: run {
+            if (file.exists()) unreadable?.set(true)
+            return@runCatching null
+        }
         val orientation = runCatching {
             ExifInterface(file.absolutePath)
                 .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
@@ -745,27 +935,40 @@ class SemanticIndexingScheduler @Inject constructor(
      * reads more detail than the gallery's Type 1 thumbnail carries. A warm HD file is a plain decode; a
      * cold one is decrypted through the gallery's bounded HD decrypt (same crypto semaphore and libgojni
      * lock), rate-limited per pass. When the budget is spent the item falls back to a warm Type 1 thumbnail
-     * or is left for a later pass, and a revision with no Type 2 thumbnail falls back to the Type 1 path.
+     * or is left for a later pass, and a revision with no Type 2 thumbnail falls back to the Type 1 path. A
+     * row still missing its cipher material spends no budget. A null return notes why in [miss].
      */
     private suspend fun decodeCloudBounded(
         linkId: String,
         userId: UserId,
         decryptBudget: AtomicInteger,
         timedOut: AtomicBoolean,
+        miss: SourceMissNote,
     ): Bitmap? {
         val hdCached = cloudHdThumbFile(linkId)
         if (hdCached.exists() && hdCached.length() > 0L) return decodeFileBounded(hdCached, timedOut)
 
-        if (!takeBudget(decryptBudget)) {
+        // The cipher material comes off the listing row, read before any budget is spent: a row still
+        // missing it (a later listing refresh fills it in) has nothing to decrypt, so it costs the pass
+        // no budget and waits out a backoff, still embedding off a warm Type 1 thumbnail meanwhile.
+        val entity = runCatching { photoListingDao.getByLinkId(linkId) }.getOrNull()
+        val contentKeyPacket = entity?.contentKeyPacket
+        val encNodeKey = entity?.encNodeKey
+        val encNodePass = entity?.encNodePassphrase
+        val parentLinkId = entity?.parentLinkId
+        if (entity == null || contentKeyPacket == null || encNodeKey == null || encNodePass == null || parentLinkId == null) {
             val warmT1 = cloudThumbFile(linkId)
             return if (warmT1.exists() && warmT1.length() > 0L) decodeFileBounded(warmT1, timedOut) else null
         }
 
-        val entity = runCatching { photoListingDao.getByLinkId(linkId) }.getOrNull() ?: return null
-        val contentKeyPacket = entity.contentKeyPacket ?: return null
-        val encNodeKey = entity.encNodeKey ?: return null
-        val encNodePass = entity.encNodePassphrase ?: return null
-        val parentLinkId = entity.parentLinkId ?: return null
+        if (!takeBudget(decryptBudget)) {
+            val warmT1 = cloudThumbFile(linkId)
+            return if (warmT1.exists() && warmT1.length() > 0L) {
+                decodeFileBounded(warmT1, timedOut)
+            } else {
+                miss.giveUp(SourceMiss.OVER_BUDGET)
+            }
+        }
 
         val hdProduced = boundedRun(DECRYPT_TIMEOUT_MS, Dispatchers.IO, timedOut) {
             runCatching {
@@ -840,26 +1043,25 @@ class SemanticIndexingScheduler @Inject constructor(
      * it: one pathological item then releases the shared lock and the walk moves on. Returns the block's
      * result, or null when the block returned null. On a true timeout it flips [timedOut], cancels the
      * wait, and returns null; the abandoned work keeps running on its own detached coroutine (a wedged
-     * native call cannot be cancelled). The caller's decrypt priority rides into the detached context so a
-     * background load stays background at the crypto gate.
+     * native call cannot be cancelled). [onRunEnd] runs exactly once when the detached run itself is over
+     * (see [boundedDetachedRun]), which is how an inference releases its session's lease. The caller's
+     * decrypt priority rides into the detached context so a background load stays background at the
+     * crypto gate.
      */
     private suspend fun <T> boundedRun(
         timeoutMs: Long,
         dispatcher: CoroutineDispatcher,
         timedOut: AtomicBoolean? = null,
+        onRunEnd: (() -> Unit)? = null,
         block: suspend CoroutineScope.() -> T,
-    ): T? {
-        val work = scope.async(
-            dispatcher + (coroutineContext[DecryptPriorityContext] ?: EmptyCoroutineContext),
-            block = block,
-        )
-        val result = withTimeoutOrNull(timeoutMs) { work.await() }
-        if (result == null && work.isActive) {
-            timedOut?.set(true)
-            work.cancel()
-        }
-        return result
-    }
+    ): T? = boundedDetachedRun(
+        scope,
+        dispatcher + (coroutineContext[DecryptPriorityContext] ?: EmptyCoroutineContext),
+        timeoutMs,
+        timedOut,
+        onRunEnd,
+        block,
+    )
 
     private fun packEmbedding(vector: FloatArray): ByteArray {
         val buffer = ByteBuffer.allocate(vector.size * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
@@ -869,27 +1071,23 @@ class SemanticIndexingScheduler @Inject constructor(
 
     /**
      * Holds a walk's image encoder as a reassignable reference, so a per-item inference timeout can abandon
-     * the wedged session and open a fresh one. A timed-out native run cannot be cancelled and keeps using
-     * its ONNX session after the watchdog gives up, so that instance must never be [close]d (closing frees
-     * the session mid-run: a native use-after-free). [abandon] drops the wedged reference without closing
-     * it and the next [encoder] opens a fresh one; [close] frees only the live session. Opened lazily and
-     * every access is serialised under [mlLock], so the plain nullable field is safe.
+     * the wedged session and open a fresh one. A native run cannot be cancelled and keeps using its ONNX
+     * session after its caller has gone (the watchdog gave up, or the walk was cancelled), so a session is
+     * never closed under a run (a native use-after-free). Every detached run holds a lease on its encoder
+     * ([beginRun]) that its completion releases; [abandon] and [close] both retire the live encoder, which
+     * closes at once when idle, else when its last run returns, and the next [beginRun] opens a fresh one.
      */
-    private class SemanticMl(private val openEncoder: () -> ClipImageEncoder) : AutoCloseable {
-        private var encoder: ClipImageEncoder? = null
+    private class SemanticMl(openEncoder: () -> ClipImageEncoder) : AutoCloseable {
+        private val encoders = GuardedSessionHolder(openEncoder)
 
-        fun encoder(): ClipImageEncoder = encoder ?: openEncoder().also { encoder = it }
+        /** Opens the live encoder if needed and counts one run on it; the run's end must call the release. */
+        fun beginRun(): SessionLease<ClipImageEncoder> = encoders.lease { it }
 
-        /** A run on the current session timed out: drop the reference without closing, so the wedged native
-         *  call keeps a valid session and the next [encoder] opens a fresh one. */
-        fun abandon() {
-            encoder = null
-        }
+        /** A run on the live session timed out: retire it (closed when that run ends) so the next run opens
+         *  a fresh one. */
+        fun abandon() = encoders.retire()
 
-        override fun close() {
-            encoder?.let { e -> runCatching { e.close() } }
-            encoder = null
-        }
+        override fun close() = encoders.retire()
     }
 
     private companion object {

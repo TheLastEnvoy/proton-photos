@@ -62,6 +62,7 @@ import eu.akoos.photos.domain.entity.ShareInvitation
 import eu.akoos.photos.domain.entity.ShareMember
 import eu.akoos.photos.domain.entity.SharedPhoto
 import eu.akoos.photos.domain.repository.DrivePhotoRepository
+import eu.akoos.photos.domain.repository.VaultWipe
 import eu.akoos.photos.util.combineSqlChunks
 import java.io.File
 import javax.inject.Inject
@@ -101,6 +102,7 @@ class DrivePhotoRepositoryImpl @Inject constructor(
     private val personCoverDao: eu.akoos.photos.data.db.dao.PersonCoverDao,
     private val personManualPhotoDao: eu.akoos.photos.data.db.dao.PersonManualPhotoDao,
     private val clusterSummaryDao: eu.akoos.photos.data.db.dao.ClusterSummaryDao,
+    private val photoLabels: eu.akoos.photos.data.label.PhotoLabelRepository,
     private val photoListingDao: PhotoListingDao,
     private val listingSweepSnapshotDao: ListingSweepSnapshotDao,
     private val syncStateDao: SyncStateDao,
@@ -109,6 +111,14 @@ class DrivePhotoRepositoryImpl @Inject constructor(
     private val offlineStore: OfflineStorageManager,
     private val hiddenStore: HiddenStorageManager,
     private val transferCenter: eu.akoos.photos.data.transfer.TransferCenter,
+    private val sdkDriveClientProvider: eu.akoos.photos.data.sdk.SdkDriveClientProvider,
+    private val widgetSignOut: eu.akoos.photos.widget.PhotoWidgetSignOut,
+    private val mlSyncSignOut: eu.akoos.photos.data.mlsync.MlSyncSignOut,
+    private val pendingMetadataEditDao: eu.akoos.photos.data.db.dao.PendingMetadataEditDao,
+    private val importStagedDao: eu.akoos.photos.data.db.dao.ImportStagedDao,
+    private val importHistoryDao: eu.akoos.photos.data.db.dao.ImportHistoryDao,
+    private val importUploadedDao: eu.akoos.photos.data.db.dao.ImportUploadedDao,
+    private val importAlbumMemberDao: eu.akoos.photos.data.db.dao.ImportAlbumMemberDao,
 ) : DrivePhotoRepository {
 
     // Long-lived scope for fire-and-forget DAO lookups in the thumbnail request path.
@@ -156,6 +166,12 @@ class DrivePhotoRepositoryImpl @Inject constructor(
 
     override suspend fun loadAlbumsCached(): List<Album> =
         albumService.loadAlbumsCached()
+
+    override suspend fun getCachedAlbumIdsForPhoto(photoLinkId: String): Set<String> =
+        albumService.getCachedAlbumIdsForPhoto(photoLinkId)
+
+    override fun observeAlbumsCached(): Flow<List<Album>> =
+        albumService.observeAlbumsCached()
 
     override suspend fun loadSharedAddableAlbumsCached(): List<Album> =
         albumService.loadSharedAddableAlbumsCached()
@@ -473,8 +489,14 @@ class DrivePhotoRepositoryImpl @Inject constructor(
     override suspend fun acceptInvitation(userId: UserId, invitationId: String) =
         albumSharingService.acceptInvitation(userId, invitationId)
 
-    override suspend fun clearCacheForSignOut(userId: UserId) {
-        // FIRST, and awaited: the full cloud walk runs on the app scope so it survives the screen
+    override suspend fun clearCacheForSignOut(userId: UserId, vault: VaultWipe) {
+        // FIRST, and awaited, on every sign-out route: an ML sync save or restore calls into this
+        // account's Drive SDK client and writes its face data, both of which go below. Its client is
+        // closed to new calls, the job cancelled, and its run waited for (bounded), so nothing calls
+        // into a freed client, re-creates one for the leaving account, or commits an import after the
+        // face wipe. A no-op when the Settings sign-out has stopped it already.
+        runCatching { mlSyncSignOut.stopFor(userId) }
+        // Then, and awaited: the full cloud walk runs on the app scope so it survives the screen
         // that started it, which also means it survives sign-out unless stopped here. Every wipe
         // below is undone by a walk still paginating past it — rows land back in photo_listing for
         // an account that is gone, decrypted with material wipeKeyCache is about to zero. Every
@@ -498,6 +520,22 @@ class DrivePhotoRepositoryImpl @Inject constructor(
         runCatching { personCoverDao.clearForUser(userId.id) }
         runCatching { personManualPhotoDao.clearForUser(userId.id) }
         runCatching { clusterSummaryDao.clearForUser(userId.id) }
+        // The account's photo labels are its own private notes about its photos and leave with it.
+        runCatching { photoLabels.clearForUser(userId) }
+        // What the account queued and imported is free text and coordinates (descriptions, places, file
+        // and album names) about a library the next person on this phone does not own.
+        runCatching { pendingMetadataEditDao.clear() }
+        runCatching { importStagedDao.deleteAll() }
+        runCatching { importHistoryDao.deleteAll() }
+        runCatching { importUploadedDao.deleteAll() }
+        runCatching { importAlbumMemberDao.deleteAll() }
+        // The plaintext an ML sync import or export passes through, left behind by a run killed part
+        // way, and the names still waiting to be put back on detected faces go with the face rows.
+        runCatching { mlSyncSignOut.wipePlaintext() }
+        // Close and drop this account's Drive SDK client so nothing reuses it after the session ends. It
+        // stays closed to new calls until the account signs in again, and a call still running closes it
+        // on its way out rather than having it freed underneath.
+        runCatching { sdkDriveClientProvider.remove(userId) }
         // Wipe all plaintext key material before the user's tokens disappear, so even if the
         // process keeps running afterwards a heap inspection can't pull keys from this Singleton.
         shareService.wipeKeyCache()
@@ -532,10 +570,17 @@ class DrivePhotoRepositoryImpl @Inject constructor(
         // keyed by volume-unique linkId (not user-partitioned), so this clears every pin's bytes;
         // a still-signed-in account simply re-downloads its pins on demand.
         runCatching { offlineStore.clearAllAndUnpin() }
-        // Wipe the decrypted Hidden vault blobs as well. The hidden index pref is cleared on the
-        // explicit sign-out, but the converged force-logout / 2FA-fail path only runs this method,
-        // so the vault must be emptied here for every sign-out route to leave no decrypted photos.
-        runCatching { hiddenStore.clearVault() }
+        // Empty the Hidden vault as far as the caller decided. A deliberate sign-out has confirmed it
+        // and takes everything; an involuntary one has first taken the photos with no Drive copy back to
+        // the gallery and spares only what could not be moved, since a vault file is the only copy a
+        // device-only photo has.
+        runCatching {
+            when (vault) {
+                VaultWipe.All -> hiddenStore.clearVault()
+                VaultWipe.None -> Unit
+                is VaultWipe.Except -> hiddenStore.clearVault(keep = vault.uris)
+            }
+        }
         // Drop the cached perceptual fingerprints so one account's near-duplicate prints don't
         // linger for the next signed-in user. Keyed by linkId / uri (not user-partitioned), so
         // this clears every row; the background scheduler refills on demand for whoever is next.
@@ -549,6 +594,9 @@ class DrivePhotoRepositoryImpl @Inject constructor(
         // left the previous account's readable bytes on disk for the next person to hold the phone.
         runCatching { downloadService.clearDecryptedCaches() }
         runCatching { transferCenter.clearHistory() }
+        // A placed widget's bitmap is a decrypted photo of this account drawn on the launcher, so it
+        // goes here, where a session the server ended is cleared as well as a Settings sign-out.
+        runCatching { widgetSignOut.clear(userId) }
     }
 
     override fun requestThumbnailDecrypt(userId: UserId, linkId: String) {

@@ -66,7 +66,6 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.PhotoAlbum
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -81,6 +80,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,11 +95,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import eu.akoos.photos.R
 import eu.akoos.photos.domain.entity.GalleryItem
+import eu.akoos.photos.presentation.albums.AlbumPhotoGrouping
 import eu.akoos.photos.presentation.albums.AlbumRenameInput
+import eu.akoos.photos.presentation.common.rememberAddLabelsAction
+import eu.akoos.photos.presentation.common.AddToAlbumMessage
 import eu.akoos.photos.presentation.common.ConfirmSheet
 import eu.akoos.photos.presentation.common.EditFieldSheet
+import eu.akoos.photos.presentation.common.addToAlbumMessage
 import eu.akoos.photos.presentation.common.HideConfirmSheet
+import eu.akoos.photos.presentation.albums.components.StickyAlbumHeader
+import eu.akoos.photos.presentation.albums.components.rememberHeroScrolledAway
 import eu.akoos.photos.presentation.common.IconBubble
+import eu.akoos.photos.presentation.common.PrimarySlot
 import eu.akoos.photos.presentation.common.ReturnToViewerPhoto
 import eu.akoos.photos.presentation.common.SecureScreenEffect
 import eu.akoos.photos.presentation.common.SelectionAction
@@ -107,6 +114,8 @@ import eu.akoos.photos.presentation.common.SelectionDrawer
 import eu.akoos.photos.presentation.common.favoriteSelectionAction
 import eu.akoos.photos.presentation.common.favoriteTurnsOn
 import eu.akoos.photos.presentation.common.anyMetadataEditable
+import eu.akoos.photos.presentation.common.photoDateSections
+import eu.akoos.photos.presentation.common.rememberGroupingPinchModifier
 import eu.akoos.photos.presentation.gallery.LocalThumbnailUrls
 import eu.akoos.photos.presentation.gallery.MetadataStripPickerDialog
 import eu.akoos.photos.presentation.gallery.MoveToFolderHost
@@ -114,6 +123,10 @@ import eu.akoos.photos.presentation.gallery.PhotoCell
 import eu.akoos.photos.presentation.gallery.ScrollDateLabel
 import eu.akoos.photos.presentation.gallery.TimelineGrouping
 import eu.akoos.photos.presentation.gallery.TimelineScrubber
+import eu.akoos.photos.presentation.gallery.selectAllCountFor
+import eu.akoos.photos.presentation.gallery.selectionGridBottomPadding
+import eu.akoos.photos.presentation.lock.LocalAppLock
+import eu.akoos.photos.presentation.lock.runWhenOpen
 import eu.akoos.photos.data.preferences.SettingsKeys
 import eu.akoos.photos.data.preferences.settingsDataStore
 import kotlinx.coroutines.flow.map
@@ -130,7 +143,6 @@ import eu.akoos.photos.presentation.theme.FgPrimary
 import eu.akoos.photos.presentation.theme.PillBg
 import eu.akoos.photos.presentation.theme.PillBgOpaque
 import eu.akoos.photos.presentation.theme.PillBorder
-import eu.akoos.photos.presentation.util.monthYearFormat
 import eu.akoos.photos.util.copySensitiveText
 
 /**
@@ -211,6 +223,12 @@ fun DeviceFolderDetailScreen(
     // Which direction the drawer's sort entries tick. The ViewModel reads the same preference for
     // the order itself, so this only has to say which one is active.
     val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
+    // The span of dates each header gathers. The drawer's grouping entries tick and save the
+    // ViewModel's copy; a pinch on the grid overrides it until the folder is left. Both outlive the
+    // trip to the viewer, so a grid coming back lays out under the headers it scrolled with.
+    val savedGrouping by viewModel.grouping.collectAsStateWithLifecycle()
+    var visitGrouping by rememberSaveable { mutableStateOf<AlbumPhotoGrouping?>(null) }
+    val photoGrouping = visitGrouping ?: savedGrouping
 
     // Move the selection into another device folder, and rename this folder in place. Both are
     // logged-out, device-data actions; the picker's targets and the move consent ride the shared host.
@@ -260,25 +278,40 @@ fun DeviceFolderDetailScreen(
     }
     val shareCtx = androidx.compose.ui.platform.LocalContext.current
     val shareChooserTitle = stringResource(R.string.share_chooser_title)
-    // The VM builds the system-share intent off the UI thread; the screen launches the chooser.
+    val appLock = LocalAppLock.current
+    // The VM builds the system-share intent off the UI thread; the screen launches the chooser. The
+    // intent can land under the app lock, and the chooser would open above the lock, so it waits for
+    // the unlock.
     LaunchedEffect(Unit) {
         viewModel.shareIntent.collect { intent ->
-            shareCtx.startActivity(android.content.Intent.createChooser(intent, shareChooserTitle))
+            appLock.runWhenOpen {
+                runCatching {
+                    shareCtx.startActivity(android.content.Intent.createChooser(intent, shareChooserTitle))
+                }
+            }
         }
     }
 
     // Add selected to a cloud album — reuses the gallery's picker sheet so the styling and
     // behaviour (cloud-backed photos join now, local-only photos upload then join) stay identical.
     var showAddToAlbumSheet by remember { mutableStateOf(false) }
-    val addToAlbumSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // The picker's own "New album" row, which names an album and then adds the selection to it.
     var showCreateAlbumInline by remember { mutableStateOf(false) }
-    // What an album add landed on, said the same way whichever row started it. A run that reaches
-    // neither an album nor the upload queue says so rather than claiming an add that never happened.
+    // What an album add landed on, said the same way whichever row started it. A photo that still has
+    // to upload is only queued, so it is never reported as added, and a run that reaches neither an
+    // album nor the upload queue says so rather than claiming an add that never happened.
     val addedToAlbumMsg = stringResource(R.string.device_folder_added_to_album)
+    val queuedForAlbumMsg = stringResource(R.string.gallery_add_to_album_queued)
     val nothingToAddMsg = stringResource(R.string.album_picker_empty)
     fun showAddToAlbumOutcome(joined: Int, queued: Int, error: String?) {
-        val msg = error ?: if (joined > 0 || queued > 0) addedToAlbumMsg else nothingToAddMsg
+        val msg = error ?: when (val outcome = addToAlbumMessage(joined, queued)) {
+            AddToAlbumMessage.Added -> addedToAlbumMsg
+            is AddToAlbumMessage.AddedAndUploading -> folderCtx.resources.getQuantityString(
+                R.plurals.gallery_add_to_album_some_queued, outcome.uploading, outcome.uploading,
+            )
+            is AddToAlbumMessage.Uploading -> queuedForAlbumMsg
+            AddToAlbumMessage.NothingAdded -> nothingToAddMsg
+        }
         scope.launch { snackbarHostState.showSnackbar(msg) }
     }
     // Unified share drawer + manage-link sheet for the selection (Send to app / Public link).
@@ -306,9 +339,12 @@ fun DeviceFolderDetailScreen(
     LaunchedEffect(pendingDeleteIntent) {
         val pi = pendingDeleteIntent ?: return@LaunchedEffect
         // Guard the launch so a stale or already-consumed sender can't force-close the screen.
-        runCatching {
-            deletePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-        }.onFailure { viewModel.clearPendingDeleteIntent() }
+        // The system trash dialog would open above the app lock, so the launch waits for the unlock.
+        appLock.runWhenOpen {
+            runCatching {
+                deletePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+            }.onFailure { viewModel.clearPendingDeleteIntent() }
+        }
     }
     // Metadata-strip write-permission launcher (foreign files on Android 11+) + result snackbar.
     val stripPermissionLauncher = rememberLauncherForActivityResult(
@@ -431,11 +467,11 @@ fun DeviceFolderDetailScreen(
         // Armed at the long-press anchor so the cell's release-tap skips toggling the just-selected
         // cell back off (otherwise a stationary long-press would select then immediately deselect).
         val tapGuard = remember { mutableStateOf(false) }
-        // Group by month like the cloud album. withIndex() keeps each item's original position so
-        // onPhotoClick still opens the right one and the drag-select keys stay aligned.
-        val photoGroups = remember(items) {
-            val fmt = monthYearFormat()
-            items.withIndex().groupBy { fmt.format(java.util.Date(it.value.captureTimeMs)) }
+        // Group under the date headers the folder's grouping picks, like the cloud album. Each item
+        // keeps its original position so onPhotoClick still opens the right one and the drag-select
+        // keys stay aligned.
+        val photoGroups = remember(items, photoGrouping) {
+            photoDateSections(items, photoGrouping) { it.captureTimeMs }
         }
         val dragSelectModifier = eu.akoos.photos.presentation.gallery.rememberDragMultiSelectModifier(
             gridState = gridState,
@@ -446,7 +482,7 @@ fun DeviceFolderDetailScreen(
             tapGuard = tapGuard,
         )
         // Land back on the photo the viewer closed on. The hero header is the one slot ahead of the
-        // photos, and each month bucket carries its own header. The cells key a Synced photo by its
+        // photos, and each date section carries its own header. The cells key a Synced photo by its
         // local uri, but the viewer is handed the items themselves, so match on the gallery identity.
         val returnGroups = remember(photoGroups) { photoGroups.values.toList() }
         ReturnToViewerPhoto(
@@ -455,6 +491,16 @@ fun DeviceFolderDetailScreen(
             headerPerGroup = true,
             leadingSlots = 1,
             keyOf = { it.value.stableId },
+        )
+        // Pinching steps the date headers for this visit. It finds a photo under the key its cell is
+        // emitted with, the one drag-select sweeps, rather than the gallery identity above.
+        val pinchModifier = rememberGroupingPinchModifier(
+            gridState = gridState,
+            grouping = photoGrouping,
+            onGroupingChange = { visitGrouping = it },
+            groups = returnGroups,
+            leadingSlots = 1,
+            keyOf = { selectableKeys[it.index] },
         )
         LazyVerticalGrid(
             columns = GridCells.Fixed(cols),
@@ -465,11 +511,11 @@ fun DeviceFolderDetailScreen(
             contentPadding = PaddingValues(
                 start = if (seamless) 0.dp else 20.dp,
                 end = if (seamless) 0.dp else 20.dp,
-                bottom = 24.dp,
+                bottom = selectionGridBottomPadding(24.dp, isSelectionMode),
             ),
             horizontalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 6.dp),
             verticalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 6.dp),
-            modifier = Modifier.fillMaxSize().then(dragSelectModifier),
+            modifier = Modifier.fillMaxSize().then(dragSelectModifier).then(pinchModifier),
         ) {
             // Hero header — cover, folder name and count, like the cloud-album detail page.
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -517,7 +563,7 @@ fun DeviceFolderDetailScreen(
                 }
             } else {
                 photoGroups.forEach { (label, entries) ->
-                    // Month section header — same styling as the cloud-album detail grid.
+                    // Date section header, same styling as the cloud-album detail grid.
                     item(span = { GridItemSpan(maxLineSpan) }, key = "hdr_$label") {
                         Row(
                             // Keep the label clear of the screen edge in seamless mode, where the
@@ -607,7 +653,7 @@ fun DeviceFolderDetailScreen(
         }
 
         // Fast-scroll scrubber over the photo grid — the same handle as the timeline. The scrubber
-        // groups by day, so the drag tooltip reads "d MMMM yyyy" even though the section headers are month.
+        // groups by day, so the drag tooltip reads "d MMMM yyyy" whatever span the section headers gather.
         if (items.isNotEmpty()) {
             TimelineScrubber(
                 gridState = gridState,
@@ -641,26 +687,51 @@ fun DeviceFolderDetailScreen(
         // Fixed back button, floating over the grid. Cancels selection while selecting, and stops a
         // running vault move the same cooperative way the system back does, so neither route out
         // kills the copy loop half-way.
-        IconBubble(
-            icon = Icons.AutoMirrored.Filled.ArrowBack,
-            contentDescription = if (isSelectionMode)
-                stringResource(R.string.gallery_cancel_selection) else stringResource(R.string.close),
-            onClick = {
-                when {
-                    isSelectionMode -> viewModel.clearSelection()
-                    folderVault != null -> viewModel.cancelFolderVault()
-                    else -> onBack()
-                }
-            },
+        // Once the hero has scrolled away the page's floating header takes over with the folder's name.
+        val heroGone by rememberHeroScrolledAway(gridState)
+        val stickyShown = heroGone && !isSelectionMode
+        AnimatedVisibility(
+            visible = !stickyShown,
+            enter = fadeIn(),
+            exit = fadeOut(),
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
-                .padding(start = 16.dp, top = 10.dp),
-            diameter = 40.dp,
-            iconSize = 18.dp,
-            background = PillBg,
-            borderColor = PillBorder,
-            tint = FgPrimary,
+                .padding(start = 12.dp, top = 8.dp),
+        ) {
+            IconBubble(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = if (isSelectionMode)
+                    stringResource(R.string.gallery_cancel_selection) else stringResource(R.string.close),
+                onClick = {
+                    when {
+                        isSelectionMode -> viewModel.clearSelection()
+                        folderVault != null -> viewModel.cancelFolderVault()
+                        else -> onBack()
+                    }
+                },
+                diameter = 40.dp,
+                iconSize = 18.dp,
+                background = PillBg,
+                borderColor = PillBorder,
+                tint = FgPrimary,
+            )
+        }
+        StickyAlbumHeader(
+            visible = stickyShown,
+            title = bucketName,
+            onBack = { if (folderVault != null) viewModel.cancelFolderVault() else onBack() },
+            modifier = Modifier.align(Alignment.TopCenter),
+            trailing = {
+                IconBubble(
+                    icon = Icons.Default.MoreVert,
+                    contentDescription = stringResource(R.string.albums_more_actions),
+                    onClick = { showFolderOverflow = true },
+                    background = PillBg,
+                    borderColor = PillBorder,
+                    tint = FgPrimary,
+                )
+            },
         )
 
         // Selection drawer: the shared surface every multi-select uses, so a folder's bulk actions
@@ -689,8 +760,8 @@ fun DeviceFolderDetailScreen(
         // The photo a cover may be pinned to, or null when the selection names none. Shared with
         // the confirmation and the write, so all three answer the same question.
         val coverCandidate = FolderCoverSelection.pinnable(selectedUris, vaultedUris)
-        // Toggles every selectable photo in the folder (cloud-only entries have no uri and stay
-        // excluded): select all, or clear once everything selectable is selected.
+        // Every selectable photo in the folder, for the drawer header's Select all (cloud-only
+        // entries have no uri and stay excluded).
         val selectableUris = if (!isSelectionMode) emptyList() else items.mapNotNull { item ->
             when (item) {
                 is GalleryItem.LocalOnly -> item.local.uri
@@ -698,21 +769,18 @@ fun DeviceFolderDetailScreen(
                 is GalleryItem.CloudOnly -> null
             }
         }
-        val allFolderSelected = selectableUris.isNotEmpty() && selectedUris.size == selectableUris.size
+        val selectAllCount = selectAllCountFor(total = selectableUris.size, selected = selectedUris.size)
         val anyDeviceOnlySelected = selectedDeviceItems.any { it is GalleryItem.LocalOnly }
         var showStripPicker by remember { mutableStateOf(false) }
+        // A vaulted photo keeps no labels, so a selection holding one offers none.
+        val addLabelsAction = rememberAddLabelsAction(
+            items = if (anyVaultedSelected) emptyList() else selectedDeviceItems,
+            onDone = { msg ->
+                scope.launch { snackbarHostState.showSnackbar(msg) }
+                viewModel.clearSelection()
+            },
+        )
         val folderSelectionActions = buildList {
-            add(
-                SelectionAction(
-                    icon = Icons.Default.SelectAll,
-                    label = stringResource(
-                        if (allFolderSelected) R.string.gallery_deselect_all else R.string.select_all,
-                    ),
-                    onClick = {
-                        viewModel.setSelectedUris(if (allFolderSelected) emptySet() else selectableUris.toSet())
-                    },
-                )
-            )
             // Share selected to other apps - device files share their URI directly, no download.
             if (selectedDeviceItems.isNotEmpty()) {
                 add(
@@ -720,6 +788,7 @@ fun DeviceFolderDetailScreen(
                         icon = Icons.Default.Share,
                         label = stringResource(R.string.sel_label_share),
                         onClick = { showPhotoShareSheet = true },
+                        slot = PrimarySlot.Share,
                     )
                 )
             }
@@ -732,6 +801,7 @@ fun DeviceFolderDetailScreen(
                         icon = Icons.Default.PhotoAlbum,
                         label = stringResource(R.string.gallery_add_to_album),
                         onClick = { showAddToAlbumSheet = true },
+                        slot = PrimarySlot.Organize,
                     )
                 )
             }
@@ -744,6 +814,7 @@ fun DeviceFolderDetailScreen(
                         icon = Icons.AutoMirrored.Filled.DriveFileMove,
                         label = stringResource(R.string.move_to_folder),
                         onClick = { showMoveSheet = true },
+                        slot = PrimarySlot.Organize,
                     )
                 )
             }
@@ -759,6 +830,7 @@ fun DeviceFolderDetailScreen(
                     onClick = { viewModel.toggleSelectedFavorite() },
                 )
             )
+            addLabelsAction?.let(::add)
             // Back up selected to Drive. Shown only when the selection holds a device-only photo
             // that still needs backing up; an all-Synced selection is already on Drive, so the
             // action would upload nothing. A snackbar confirms either way since the progress
@@ -836,14 +908,17 @@ fun DeviceFolderDetailScreen(
                 )
             }
             // Delete selected - same sheet + system trash dialog as the gallery, with the option
-            // to also remove the Drive copy of any backed-up photos.
+            // to also remove the Drive copy of any backed-up photos. Held off while a delete or a
+            // hide runs, as the Hide row is. It does not spin: a hide raises isDeleting too.
             if (selectedDeviceItems.isNotEmpty()) {
                 add(
                     SelectionAction(
                         icon = Icons.Default.DeleteOutline,
                         label = stringResource(R.string.sel_label_delete),
                         tint = ErrorColor,
+                        enabled = !isDeleting,
                         onClick = { showDeleteSheet = true },
+                        slot = PrimarySlot.Delete,
                     )
                 )
             }
@@ -857,6 +932,12 @@ fun DeviceFolderDetailScreen(
             // through the photos needs no deliberate pull or tap first.
             contentScrolling = gridState.isScrollInProgress,
             modifier = Modifier.align(Alignment.BottomCenter),
+            selectAllCount = selectAllCount,
+            onSelectAll = if (selectAllCount != null) {
+                { viewModel.setSelectedUris(selectableUris.toSet()) }
+            } else {
+                null
+            },
         )
         if (showStripPicker) {
             MetadataStripPickerDialog(
@@ -941,7 +1022,6 @@ fun DeviceFolderDetailScreen(
             eu.akoos.photos.presentation.gallery.GalleryAddToAlbumDialog(
                 selectedItems = addItems,
                 cloudAlbums = albums,
-                sheetState = addToAlbumSheetState,
                 onCreateNew = {
                     showAddToAlbumSheet = false
                     showCreateAlbumInline = true
@@ -1138,6 +1218,7 @@ fun DeviceFolderDetailScreen(
             isHiddenCard = isHiddenCard,
             isSignedIn = isSignedIn,
             sortMode = sortMode,
+            grouping = savedGrouping,
             onDismiss = { showFolderOverflow = false },
             onBackUp = if (hasPhotos) ({ asMirror -> backUpFolder(asMirror) }) else null,
             onToggleMirrorAsAlbum = viewModel::toggleMirrorAsAlbum,
@@ -1154,9 +1235,34 @@ fun DeviceFolderDetailScreen(
             // current sort order.
             onSlideshow = if (hasPhotos) ({ onSlideshowClick(items) }) else null,
             onSortSelected = viewModel::setSortMode,
+            // Saved and shown at once, so a tap on the marked chip also undoes a pinch.
+            onGroupingSelected = { grouping ->
+                viewModel.setGrouping(grouping)
+                visitGrouping = grouping
+            },
             // Logged-out only; the row renders behind the same gate in the sheet.
             onRename = { showRenameSheet = true },
+            // The device side only: the vault's side of a folder has no device file to delete.
+            onDeleteFolder = if (!fromVault && hasPhotos) viewModel::requestDeleteFolder else null,
         )
+    }
+
+    // Deleting the whole folder asks first, on the photos a device read finds in it, then runs through
+    // the selection delete's own path: the same blocking sheet, system trash dialog and failure report.
+    val folderDeleteRequest by viewModel.folderDeleteRequest.collectAsStateWithLifecycle()
+    folderDeleteRequest?.let { request ->
+        DeviceFolderDeleteSheet(
+            request = request,
+            isSignedIn = isSignedIn,
+            onDelete = viewModel::confirmDeleteFolder,
+            onDismiss = viewModel::dismissDeleteFolderRequest,
+        )
+    }
+    // Once the folder is deleted there is nothing left here to show, so the screen leaves, as an
+    // album's own screen does once the album is hidden.
+    val folderDeleted by viewModel.folderDeleted.collectAsStateWithLifecycle()
+    LaunchedEffect(folderDeleted) {
+        if (folderDeleted) onBack()
     }
 
     // Rename this folder in place: the same field the Albums grid's device-folder rename uses,

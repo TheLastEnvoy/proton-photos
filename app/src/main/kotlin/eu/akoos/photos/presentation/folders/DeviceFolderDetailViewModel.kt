@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -64,7 +65,10 @@ import eu.akoos.photos.util.ProtonPhotosStorage
 import eu.akoos.photos.util.ExifHelper
 import eu.akoos.photos.util.StripResult
 import eu.akoos.photos.util.stripForShareOrOriginal
+import eu.akoos.photos.presentation.albums.AlbumPhotoGrouping
 import eu.akoos.photos.presentation.albums.AlbumPhotoSortMode
+import eu.akoos.photos.presentation.albums.PhotoViewChoiceStore
+import eu.akoos.photos.presentation.albums.PhotoViewChoices
 import eu.akoos.photos.presentation.common.FavoriteActionState
 import eu.akoos.photos.presentation.common.addToAlbumOutcome
 import eu.akoos.photos.presentation.common.MoveToFolderController
@@ -119,6 +123,8 @@ class DeviceFolderDetailViewModel @Inject constructor(
     private val undoController: UndoController,
     private val favoriteWriter: eu.akoos.photos.presentation.common.FavoriteWriter,
     private val moveController: MoveToFolderController,
+    private val folderDelete: DeviceFolderDeleteController,
+    private val albumListEvents: eu.akoos.photos.util.AlbumListEventBus,
 ) : ViewModel() {
 
     private val _items = MutableStateFlow<List<GalleryItem>>(emptyList())
@@ -259,18 +265,34 @@ class DeviceFolderDetailViewModel @Inject constructor(
     /** Direction this folder lists its photos in, read straight from preferences so a change lands
      *  on the grid without a reload. Shares the album's type: the choice is the same two directions
      *  over the same capture time, and a second enum would fork the labels and icons with it. */
-    private val sortModeFlow = context.settingsDataStore.data
-        .map { AlbumPhotoSortMode.fromOrdinal(it[SettingsKeys.DEVICE_FOLDER_PHOTO_SORT_MODE]) }
+    private val sortModeFlow = combine(context.settingsDataStore.data, bucketName) { prefs, name ->
+        PhotoViewChoices.from(prefs).sortOfFolder(name)
+    }.distinctUntilChanged()
 
     /** The same value for the actions sheet, which only has to say which direction is ticked. */
     val sortMode: StateFlow<AlbumPhotoSortMode> = sortModeFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlbumPhotoSortMode.Default)
 
-    /** Persist a direction. Every folder shares the one choice, matching how the album stores its. */
+    /** Persist a direction for this folder alone. */
     fun setSortMode(mode: AlbumPhotoSortMode) {
-        viewModelScope.launch {
-            context.settingsDataStore.edit { it[SettingsKeys.DEVICE_FOLDER_PHOTO_SORT_MODE] = mode.ordinal }
-        }
+        val name = bucketName.value
+        viewModelScope.launch { PhotoViewChoiceStore.setFolderSort(context, name, mode) }
+    }
+
+    /** The span of dates each header on this screen gathers. Held here rather than read by the
+     *  screen: back from the viewer, the grid restores its scroll as an item index, so from the first
+     *  frame the headers have to be the ones it was saved under. This value outlives that trip, where
+     *  a screen-level read would start again from the default. */
+    val grouping: StateFlow<AlbumPhotoGrouping> =
+        combine(context.settingsDataStore.data, bucketName) { prefs, name ->
+            PhotoViewChoices.from(prefs).groupingOfFolder(name)
+        }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlbumPhotoGrouping.Default)
+
+    /** Persist a grouping for this folder alone, the same way as [setSortMode]. */
+    fun setGrouping(grouping: AlbumPhotoGrouping) {
+        val name = bucketName.value
+        viewModelScope.launch { PhotoViewChoiceStore.setFolderGrouping(context, name, grouping) }
     }
 
     /** The photo this folder's cover is pinned to, or null while it follows the first photo of the
@@ -529,7 +551,7 @@ class DeviceFolderDetailViewModel @Inject constructor(
                 // lookup per record for photos the screen does not list.
                 val showsVault = fromVault && vault.isFolderHidden
                 val vaulted = if (showsVault) vaultedItemsOf(vault.bucketName, vault) else emptyList()
-                // Ordered on captureTimeMs, the value the screen's month headers and the scrubber
+                // Ordered on captureTimeMs, the value the screen's date headers and the scrubber
                 // read. A synced photo's device DATE_TAKEN can differ from its Drive capture time —
                 // a downloaded file is dated at download — so ordering on the raw device date would
                 // file such a photo under a heading it sorts nowhere near.
@@ -599,11 +621,13 @@ class DeviceFolderDetailViewModel @Inject constructor(
     /** Replace the whole selection — used by the drag-select sweep, which sets the swept range each frame. */
     fun setSelectedUris(uris: Set<String>) = selection.set(uris)
 
-    /** Seed [albums] from the local album cache so the "Add to album" picker has options. */
+    /** Keep [albums] on the cached album rows, so the "Add to album" picker has options without a
+     *  network round-trip and follows an album made or refreshed anywhere in the app. */
     private fun loadAlbums() {
         viewModelScope.launch {
-            runCatching { driveRepo.loadAlbumsCached() }
-                .onSuccess { _albums.value = it }
+            driveRepo.observeAlbumsCached()
+                .catch { }
+                .collect { _albums.value = it }
         }
     }
 
@@ -620,6 +644,7 @@ class DeviceFolderDetailViewModel @Inject constructor(
         if (items.isEmpty()) return onResult(0, 0)
         viewModelScope.launch {
             val (joined, queued) = addItemsToAlbum(userId, albumLinkId, items)
+            if (joined > 0) albumListEvents.notifyChanged()
             selection.clear()
             onResult(joined, queued)
         }
@@ -650,6 +675,11 @@ class DeviceFolderDetailViewModel @Inject constructor(
             val (joined, queued) = addItemsToAlbum(userId, albumLinkId, items)
             selection.clear()
             onResult(joined, queued, null)
+            // Refreshing writes the new album into the cached list the picker and the Albums page
+            // read; the notice makes an open Albums page reload as well.
+            runCatching { driveRepo.loadAlbums(userId) }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            albumListEvents.notifyChanged()
         }
     }
 
@@ -891,7 +921,51 @@ class DeviceFolderDetailViewModel @Inject constructor(
      * Drive copy. On Android 11+ the local delete routes through the system trash dialog and defers the cloud delete.
      */
     fun deleteSelected(freeUpSpace: Boolean, deleteFromCloud: Boolean) {
-        val items = selectedGalleryItems()
+        deleteItems(selectedGalleryItems(), freeUpSpace, deleteFromCloud, wholeFolder = false)
+    }
+
+    /** The delete of this whole folder awaiting confirmation, or null when none is. */
+    val folderDeleteRequest: StateFlow<DeviceFolderDeleteRequest?> = folderDelete.request
+
+    /** True once a delete of this whole folder has landed, so the screen leaves a folder that is no
+     *  longer on the device rather than showing it empty. */
+    private val _folderDeleted = MutableStateFlow(false)
+    val folderDeleted: StateFlow<Boolean> = _folderDeleted.asStateFlow()
+
+    /** Whether the delete waiting on the system dialog is the whole folder's rather than a selection's. */
+    private var pendingFolderDelete = false
+
+    /**
+     * Ask about deleting this folder with everything it holds on the device. The device side alone
+     * offers it: the vault's side of a folder has no device file to delete. Held off while a folder
+     * hide or restore runs, whose own delete would share the one system dialog this one waits on.
+     */
+    fun requestDeleteFolder() {
+        if (openedFromVault.value || folderVaultJob?.isActive == true) return
+        folderDelete.ask(viewModelScope, bucketName.value)
+    }
+
+    /** Drop the question. The folder is untouched. */
+    fun dismissDeleteFolderRequest() = folderDelete.dismiss()
+
+    /** Delete the photos the confirmation named, through the same body as a selection delete. Only
+     *  the device copies go: a backed-up photo keeps its Drive copy and becomes cloud-only. */
+    fun confirmDeleteFolder() {
+        val items = folderDelete.take() ?: return
+        deleteItems(items, freeUpSpace = true, deleteFromCloud = false, wholeFolder = true)
+    }
+
+    /**
+     * The one delete body the selection and the whole folder share, so both raise the same blocking
+     * sheet and the same system trash dialog and report a failure the same way. [wholeFolder] marks a
+     * delete of the folder itself, reported through [folderDeleted] once it lands.
+     */
+    private fun deleteItems(
+        items: List<GalleryItem>,
+        freeUpSpace: Boolean,
+        deleteFromCloud: Boolean,
+        wholeFolder: Boolean,
+    ) {
         if (items.isEmpty()) return
         viewModelScope.launch {
             // A local (device) delete needs no account; the use case only requires a signed-in user
@@ -903,15 +977,25 @@ class DeviceFolderDetailViewModel @Inject constructor(
                     is DeletePhotoUseCase.Result.Success -> {
                         // No system-trash dialog was needed, so device copies were untouched or removed
                         // permanently (pre-R): only a cloud trash is reversible, localRecoverable = false.
-                        buildDeleteUndoAction(items, freeUpSpace, deleteFromCloud, hide = false, localRecoverable = false)
+                        buildDeleteUndoAction(result.landed(items), freeUpSpace, deleteFromCloud, hide = false, localRecoverable = false)
                             ?.let { undoController.offer(it) }
                         selection.clear()
+                        // A file Android 10 refused stays, and so does the folder that holds it.
+                        if (result.keptOnDevice.isNotEmpty()) {
+                            _hideFailure.tryEmit(context.getString(R.string.album_delete_photos_failed))
+                        } else if (wholeFolder) {
+                            _folderDeleted.value = true
+                        }
                     }
                     is DeletePhotoUseCase.Result.NeedsMediaWritePermission -> {
                         pendingPermissionResult = result
+                        pendingFolderDelete = wholeFolder
                         _pendingDeleteIntent.value = result.pendingIntent
                     }
-                    is DeletePhotoUseCase.Result.CloudDeleteFailed -> Unit
+                    // Nothing was deleted: the request could not be built, or Drive refused before the
+                    // device was touched. Said the way the confirmed path below says it.
+                    is DeletePhotoUseCase.Result.CloudDeleteFailed ->
+                        _hideFailure.tryEmit(context.getString(R.string.viewer_delete_drive_failed))
                 }
             } finally {
                 _isDeleting.value = false
@@ -1156,55 +1240,88 @@ class DeviceFolderDetailViewModel @Inject constructor(
         val pending = pendingPermissionResult
         pendingPermissionResult = null
         _pendingDeleteIntent.value = null
+        val wholeFolder = pendingFolderDelete
+        pendingFolderDelete = false
         viewModelScope.launch {
-            if (pending != null) {
-                // A local (device) delete/hide finishes without an account; the use case guards its
-                // own cloud branch. run {} instead of an if-null so a guest's confirmed action commits.
-                val userId = accountManager.getPrimaryUserId().first()
-                run {
-                    // The refusal comes back as an answer rather than an exception, so it was
-                    // being dropped: the device file had gone, the Drive copy had not, and the
-                    // screen said nothing at all. The timeline surface already reports this.
-                    val cloudResult = deletePhotoUseCase.completeAfterPermissionGranted(
-                        userId = userId,
-                        cloudLinkIds = pending.cloudLinkIds,
-                        items = pending.itemsBeingDeleted,
-                        freeUpSpace = pending.freeUpSpace,
-                        hide = pending.hide,
-                    )
-                    if (cloudResult is DeletePhotoUseCase.Result.CloudDeleteFailed) {
-                        _hideFailure.tryEmit(context.getString(R.string.viewer_delete_drive_failed))
-                    }
-                    if (pending.hide) {
-                        // Snapshot both halves before commitPendingHide() clears them, then offer Undo.
-                        val hideUris = pendingHidePrivateUris
-                        val hideCloudIds = pendingHideCloudLinkIds
-                        pendingHideCloudLinkIds = emptyList()
-                        commitPendingHide()
-                        buildHideUndoAction(hideUris, hideCloudIds)?.let { undoController.offer(it) }
-                        reportHideFailures()
-                    } else {
-                        // The system trash keeps the local files for ~30 days, so a confirmed delete is
-                        // reversible: localRecoverable = true.
-                        buildDeleteUndoAction(
-                            pending.itemsBeingDeleted,
-                            pending.freeUpSpace,
-                            deleteFromCloud = pending.cloudLinkIds.isNotEmpty(),
-                            hide = false,
-                            localRecoverable = true,
-                        )?.let { undoController.offer(it) }
+            if (pending == null) {
+                selection.clear()
+                if (wholeFolder) _folderDeleted.value = true
+                return@launch
+            }
+            // A local (device) delete/hide finishes without an account; the use case guards its
+            // own cloud branch, so a guest's confirmed action commits.
+            val userId = accountManager.getPrimaryUserId().first()
+            // The refusal comes back as an answer rather than an exception, so it was
+            // being dropped: the device file had gone, the Drive copy had not, and the
+            // screen said nothing at all. The timeline surface already reports this.
+            val result = deletePhotoUseCase.completeAfterPermissionGranted(userId, pending)
+            if (result is DeletePhotoUseCase.Result.NeedsMediaWritePermission) {
+                // The next chunk of a delete too large for one request, launched like the first.
+                pendingPermissionResult = result
+                pendingFolderDelete = wholeFolder
+                _pendingDeleteIntent.value = result.pendingIntent
+                return@launch
+            }
+            if (result is DeletePhotoUseCase.Result.CloudDeleteFailed) {
+                _hideFailure.tryEmit(context.getString(R.string.viewer_delete_drive_failed))
+            }
+            val leftOnDevice = when (result) {
+                is DeletePhotoUseCase.Result.Success -> result.keptOnDevice.also {
+                    if (it.isNotEmpty() && !pending.hide) {
+                        _hideFailure.tryEmit(context.getString(R.string.album_delete_photos_failed))
                     }
                 }
+                // A failed Drive half ends the delete, so any later chunk was never asked about.
+                else -> pending.remaining
             }
-            selection.clear()
+            // The device copies went with the confirmed dialog, whatever Drive answered after it.
+            finishConfirmedDelete(pending, pending.confirmedItems, folderGone = wholeFolder && leftOnDevice.isEmpty())
         }
     }
 
+    /** Settle a delete or hide whose system dialog was confirmed, for the [carriedOut] items it took. */
+    private suspend fun finishConfirmedDelete(
+        pending: DeletePhotoUseCase.Result.NeedsMediaWritePermission,
+        carriedOut: List<GalleryItem>,
+        folderGone: Boolean,
+    ) {
+        if (pending.hide) {
+            // Snapshot both halves before commitPendingHide() clears them, then offer Undo. The
+            // commit returns any photo whose original is still on the device to view.
+            val hideUris = pendingHidePrivateUris
+            val hideCloudIds = pendingHideCloudLinkIds
+            pendingHideCloudLinkIds = emptyList()
+            commitPendingHide()
+            buildHideUndoAction(hideUris, hideCloudIds)?.let { undoController.offer(it) }
+            reportHideFailures()
+        } else {
+            // The system trash keeps the local files for ~30 days, so a confirmed delete is
+            // reversible: localRecoverable = true.
+            buildDeleteUndoAction(
+                carriedOut,
+                pending.freeUpSpace,
+                deleteFromCloud = pending.deleteFromCloud,
+                hide = false,
+                localRecoverable = true,
+            )?.let { undoController.offer(it) }
+        }
+        selection.clear()
+        if (folderGone) _folderDeleted.value = true
+    }
+
     /** User cancelled the system trash dialog — drop the deferred cloud work and any pending vault
-     *  copies. The originals are untouched, so the photos stay where the user already sees them. */
+     *  copies. The originals are untouched, so the photos stay where the user already sees them.
+     *  A later chunk of a large delete declined leaves the chunks before it carried out, so those
+     *  finish as a landed delete while the folder keeps the rest. */
     fun clearPendingDeleteIntent() {
+        val pending = pendingPermissionResult
         pendingPermissionResult = null
+        pendingFolderDelete = false
         _pendingDeleteIntent.value = null
+        if (pending != null && pending.done.isNotEmpty()) {
+            viewModelScope.launch { finishConfirmedDelete(pending, pending.done, folderGone = false) }
+            return
+        }
         rollbackPendingHide()
     }
 

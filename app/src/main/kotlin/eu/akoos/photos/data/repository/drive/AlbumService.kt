@@ -47,6 +47,7 @@ import eu.akoos.photos.data.api.DriveApiService
 import eu.akoos.photos.data.api.dto.AddAlbumMultipleEntry
 import eu.akoos.photos.data.api.dto.AddAlbumMultipleRequest
 import eu.akoos.photos.data.api.dto.AlbumDto
+import eu.akoos.photos.data.api.dto.BatchLinksRequest
 import eu.akoos.photos.data.api.dto.CreateAlbumLinkData
 import eu.akoos.photos.data.api.dto.CreateAlbumRequest
 import eu.akoos.photos.data.api.dto.PhotoLinkDto
@@ -65,6 +66,7 @@ import eu.akoos.photos.data.repository.VideoDurationBackfillScheduler
 import eu.akoos.photos.domain.entity.Album
 import eu.akoos.photos.domain.entity.AlbumChild
 import eu.akoos.photos.domain.entity.AlbumDeleteWouldLosePhotos
+import eu.akoos.photos.domain.entity.AlbumNotFoundException
 import eu.akoos.photos.domain.entity.CloudPhoto
 import eu.akoos.photos.domain.entity.DriveNotFoundException
 import eu.akoos.photos.domain.repository.DrivePhotoRepository
@@ -273,6 +275,18 @@ class AlbumService @Inject constructor(
     suspend fun getAlbumIdsByPhoto(userId: UserId): Map<String, Set<String>> = withContext(Dispatchers.IO) {
         ensureMembershipCachesFresh(userId)
         fullMembershipCache ?: emptyMap()
+    }
+
+    /**
+     * The album linkIds [photoLinkId] is in, read from the local membership table with no network
+     * call. May miss albums whose members were not stored yet; [getAlbumIdsByPhoto] is the
+     * complete answer. Empty on a read failure.
+     */
+    suspend fun getCachedAlbumIdsForPhoto(photoLinkId: String): Set<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            albumPhotoMembershipDao.observeAlbumIdsForPhotos(setOf(photoLinkId)).first()
+                .mapTo(HashSet()) { it.albumLinkId }
+        }.getOrDefault(emptySet())
     }
 
     /**
@@ -583,21 +597,38 @@ class AlbumService @Inject constructor(
      * run on this device, or when the user has just signed out.
      */
     suspend fun loadAlbumsCached(): List<Album> = withContext(Dispatchers.IO) {
-        runCatching {
-            val thumbnailCacheDir = File(context.cacheDir, "thumbnails")
-            val hiddenAlbumIds = runCatching { context.settingsDataStore.data.first()[SettingsKeys.HIDDEN_ALBUM_IDS] }.getOrNull().orEmpty()
-            val hiddenCoverIds = runCatching { observeHiddenAlbumMemberLinkIds().first() }.getOrNull().orEmpty()
-            cloudAlbumDao.getOwned().map { entity ->
-                val domain = entity.toDomain()
-                // Rehydrate coverThumbnailUrl from local sources (the entity doesn't persist expiring
-                // CDN URLs) and skip a hidden cover, resolving a non-hidden member instead. A hidden
-                // album keeps its own cover for the Hidden view.
-                val coverUrl = resolveVisibleCoverThumbnail(domain.linkId, domain.coverLinkId, domain.linkId in hiddenAlbumIds, hiddenCoverIds, thumbnailCacheDir)
-                domain.copy(coverThumbnailUrl = coverUrl)
-            }
-        }.getOrElse { e ->
+        runCatching { hydrateOwnedAlbums(cloudAlbumDao.getOwned()) }.getOrElse { e ->
             Log.w(TAG, "loadAlbumsCached: failed (${e.message}), returning empty")
             emptyList()
+        }
+    }
+
+    /**
+     * Live version of [loadAlbumsCached]: re-emits whenever the cached album rows change, so a
+     * picker that holds the list follows an album created or refreshed anywhere in the app.
+     */
+    fun observeAlbumsCached(): Flow<List<Album>> = cloudAlbumDao.observeOwned()
+        .map { entities ->
+            withContext(Dispatchers.IO) {
+                runCatching { hydrateOwnedAlbums(entities) }.getOrElse { e ->
+                    Log.w(TAG, "observeAlbumsCached: failed (${e.message}), returning empty")
+                    emptyList()
+                }
+            }
+        }
+        .distinctUntilChanged()
+
+    private suspend fun hydrateOwnedAlbums(entities: List<CloudAlbumEntity>): List<Album> {
+        val thumbnailCacheDir = File(context.cacheDir, "thumbnails")
+        val hiddenAlbumIds = runCatching { context.settingsDataStore.data.first()[SettingsKeys.HIDDEN_ALBUM_IDS] }.getOrNull().orEmpty()
+        val hiddenCoverIds = runCatching { observeHiddenAlbumMemberLinkIds().first() }.getOrNull().orEmpty()
+        return entities.map { entity ->
+            val domain = entity.toDomain()
+            // Rehydrate coverThumbnailUrl from local sources (the entity doesn't persist expiring
+            // CDN URLs) and skip a hidden cover, resolving a non-hidden member instead. A hidden
+            // album keeps its own cover for the Hidden view.
+            val coverUrl = resolveVisibleCoverThumbnail(domain.linkId, domain.coverLinkId, domain.linkId in hiddenAlbumIds, hiddenCoverIds, thumbnailCacheDir)
+            domain.copy(coverThumbnailUrl = coverUrl)
         }
     }
 
@@ -1436,10 +1467,13 @@ class AlbumService @Inject constructor(
         val rootLinkKeyBytes = shareService.getRootLinkKeyBytes(userId)
             ?: error("addPhotosToAlbum: cannot load root link key")
 
-        // 2. Fetch album link to get its NodeKey, NodePassphrase, and NodeHashKey
-        val albumDetailMap = linkDetailHelpers.batchFetchLinkDetails(userId, volumeId, listOf(albumLinkId))
-        val albumDto = albumDetailMap[albumLinkId]
-            ?: error("addPhotosToAlbum: album link not found: $albumLinkId")
+        // 2. Fetch album link to get its NodeKey, NodePassphrase, and NodeHashKey. Asked directly, not
+        //    through batchFetchLinkDetails, which skips a request that failed: a failed lookup has to
+        //    stay a failure here, so only an answer that leaves the album out can mean it is gone.
+        val albumDto = semaphore.withPermit {
+            manager.invoke { batchGetLinks(volumeId, BatchLinksRequest(listOf(albumLinkId))) }.valueOrThrow
+        }.links.firstOrNull { it.link.linkId == albumLinkId }
+            ?: throw missingAlbumError(userId, albumLinkId)
         val albumLinkDto = albumDto.link
         val albumNodeKeyArmored = albumLinkDto.nodeKey
             ?: error("addPhotosToAlbum: album has no NodeKey")
@@ -1662,6 +1696,26 @@ class AlbumService @Inject constructor(
         }
         invalidateMembershipCache()
         DrivePhotoRepository.AddPhotosToAlbumResult(succeeded, failed)
+    }
+
+    /**
+     * Why the lookup on this user's own volume came back without [albumLinkId]. Drive leaves a link it
+     * no longer holds out of the answer rather than failing the request, but an album someone shared
+     * with this user is left out the same way, since it lives on the sharer's volume. So only an album
+     * the shared-with-me listing lacks as well is [AlbumNotFoundException]; a shared one, or a listing
+     * that fails, stays an ordinary failure.
+     */
+    private suspend fun missingAlbumError(userId: UserId, albumLinkId: String): Exception {
+        val manager = apiProvider.get<DriveApiService>(userId)
+        var anchorId: String? = null
+        do {
+            val page = semaphore.withPermit { manager.invoke { getSharedWithMeAlbums(anchorId) }.valueOrThrow }
+            if (page.albums.any { it.linkId == albumLinkId }) {
+                return IllegalStateException("addPhotosToAlbum: album $albumLinkId is not on this volume")
+            }
+            anchorId = if (page.more) page.anchorId else null
+        } while (anchorId != null)
+        return AlbumNotFoundException(albumLinkId)
     }
 
     /**

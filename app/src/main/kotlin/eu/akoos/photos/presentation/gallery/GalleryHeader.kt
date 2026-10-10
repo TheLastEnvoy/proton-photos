@@ -53,14 +53,10 @@ internal fun GalleryHeader(
     selectedTab: Int,
     galleryState: GalleryUiState,
     albumsState: AlbumsUiState,
-    sharedFilter: SharedFilter,
-    activeEmailFilter: String?,
     isOnlineNow: Boolean,
     onFilterSelected: (GalleryFilter) -> Unit,
-    onSearchClick: () -> Unit,
     onCalendarClick: () -> Unit,
     onClearContentFilter: () -> Unit,
-    onHiddenAlbumClick: () -> Unit,
     /** Opens the content-filter drawer from the Photos-tab filter icon. */
     onShowAlbumsFilterSheet: () -> Unit,
     /** Opens the create-album dialog from the Albums-tab "New album" pill. */
@@ -68,19 +64,10 @@ internal fun GalleryHeader(
     /** Logged-out only: opens the "New folder" picker from the Albums-tab pill in the same spot. */
     onNewLocalFolder: () -> Unit = {},
     albumFilter: AlbumDisplayFilter = AlbumDisplayFilter.All,
-    /** Cycles the Albums-tab narrowing (All to Cloud to Local) from the pill label. */
+    /** Cycles the Albums-tab narrowing (All to Cloud to Local to Excluded) from the pill label. */
     onAlbumFilterSelected: (AlbumDisplayFilter) -> Unit = {},
     /** Opens the Albums-tab view-filter sheet from its filter icon. */
     onOpenAlbumsFilterSheet: () -> Unit = {},
-    /** Albums-tab inline search: the query, whether the rail's search bar is open, and their setters. */
-    albumQuery: String = "",
-    onAlbumQueryChange: (String) -> Unit = {},
-    albumSearchActive: Boolean = false,
-    onAlbumSearchActiveChange: (Boolean) -> Unit = {},
-    /** True while the Albums page is in arrange mode, which hides the search entry in the rail. */
-    albumReorderActive: Boolean = false,
-    onSharedFilterSelected: (SharedFilter) -> Unit,
-    onShowSharedEmailSheet: () -> Unit,
     onSettingsClick: () -> Unit,
     onHeaderMeasured: (Int) -> Unit,
     updateAvailable: Boolean = false,
@@ -106,38 +93,29 @@ internal fun GalleryHeader(
             when (selectedTab) {
                 0 -> {
                     FilterRail(
-                        totalCount = galleryState.items.size,
+                        // What is on screen: the filtered count while any filter narrows the timeline.
+                        totalCount = if (galleryState.contentFilter != ContentFilter() ||
+                            galleryState.selectedFilter != GalleryFilter.All
+                        ) galleryState.filteredItems.size else galleryState.items.size,
                         contentFilter = galleryState.contentFilter,
-                        onSearchClick = onSearchClick,
+                        selectedCategory = galleryState.selectedFilter,
                         onCalendarClick = onCalendarClick,
-                        onClearContentFilter = onClearContentFilter,
+                        onClearContentFilter = {
+                            onClearContentFilter()
+                            onFilterSelected(GalleryFilter.All)
+                        },
                         onOpenTimelineFilter = onShowAlbumsFilterSheet,
                         modifier = Modifier.weight(1f),
                     )
                 }
                 1 -> {
                     AlbumsFilterRail(
-                        onHiddenAlbumClick = onHiddenAlbumClick,
                         onNewAlbumClick = onNewAlbumClick,
                         onNewLocalFolder = onNewLocalFolder,
                         selectedFilter = albumFilter,
                         onFilterSelected = onAlbumFilterSelected,
                         onOpenSheet = onOpenAlbumsFilterSheet,
                         isSignedIn = galleryState.isSignedIn,
-                        searchQuery = albumQuery,
-                        onSearchQueryChange = onAlbumQueryChange,
-                        searchActive = albumSearchActive,
-                        onSearchActiveChange = onAlbumSearchActiveChange,
-                        reorderActive = albumReorderActive,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                2 -> {
-                    SharedFilterRail(
-                        selectedFilter = sharedFilter,
-                        onFilterSelected = onSharedFilterSelected,
-                        activeEmailFilter = activeEmailFilter,
-                        onFilterClick = onShowSharedEmailSheet,
                         modifier = Modifier.weight(1f),
                     )
                 }

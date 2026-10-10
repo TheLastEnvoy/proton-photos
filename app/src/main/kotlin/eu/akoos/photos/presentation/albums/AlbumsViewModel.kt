@@ -29,6 +29,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +44,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -88,14 +90,13 @@ data class DeviceFolder(
  * on the bucket name, the same way the Settings pickers and the folder screen store them, so a
  * change made from the grid is the same change made anywhere else.
  *
- * Held as one value so the settings store's emissions can be de-duplicated across all four at once:
- * the store also emits on unrelated writes, and each of these lands in the same drawer.
+ * Held as one value so the settings store's emissions can be de-duplicated across all of them at
+ * once: the store also emits on unrelated writes, and each of these lands in the same drawer.
  */
 data class DeviceFolderPrefs(
     val mirroredAsAlbum: Set<String> = emptySet(),
     val excludedFromBackup: Set<String> = emptySet(),
     val hiddenFromTimeline: Set<String> = emptySet(),
-    val sortMode: AlbumPhotoSortMode = AlbumPhotoSortMode.Default,
 )
 
 data class AlbumsUiState(
@@ -107,6 +108,9 @@ data class AlbumsUiState(
      *  flag, for the same reason [folderPrefs] is: the grid shows every album at once and the drawer
      *  asks about whichever card was held. */
     val timelineExcludedAlbumIds: Set<String> = emptySet(),
+    /** The albums and folders taken off the grid, as stored entries. Read through
+     *  [AlbumsGridExclusion], which also decides what each view filter lays out. */
+    val excludedFromGrid: Set<String> = emptySet(),
     val error: String? = null,
     val isCreatingAlbum: Boolean = false,
     val createAlbumError: String? = null,
@@ -119,9 +123,12 @@ data class AlbumsUiState(
      *  rather than a resolved flag, because the grid shows every folder at once and the drawer asks
      *  about whichever card was held. */
     val folderPrefs: DeviceFolderPrefs = DeviceFolderPrefs(),
-    /** The direction every album lists its photos in. One global choice, so the album long-press
-     *  drawer needs it here to tick the one in force without opening the album. */
-    val albumPhotoSortMode: AlbumPhotoSortMode = AlbumPhotoSortMode.Default,
+    /** The direction and the header span each album and folder lists its photos with, so a long-press
+     *  drawer can tick the ones in force for the card that was held without opening it. */
+    val viewChoices: PhotoViewChoices = PhotoViewChoices(),
+    /** The order [albums] is sorted by, published with the list it ordered so the grid sees a new
+     *  order and its effect together. Null until the store delivers it. */
+    val albumSortMode: AlbumSortMode? = null,
 ) {
     /** Cloud albums hidden client-side drop off the Albums grid. */
     val visibleCloudAlbums: List<Album> get() = albums.filter { it.linkId !in hiddenAlbumIds }
@@ -191,9 +198,10 @@ class AlbumsViewModel @Inject constructor(
 
     init {
         observeSortMode()
-        observeAlbumPhotoSortMode()
+        observeViewChoices()
         loadAlbums()
         observeDeviceFolders()
+        observeExcludedFromGrid()
         // Re-fetch on share-state changes so the grid badge updates without a manual pull-to-refresh.
         viewModelScope.launch {
             albumListEvents.changes.collect { loadAlbums() }
@@ -231,23 +239,23 @@ class AlbumsViewModel @Inject constructor(
                 .collect { (mode, order) ->
                     sortMode.value = mode
                     customOrder.value = order
-                    _uiState.update { it.copy(albums = applySort(it.albums)) }
+                    _uiState.update { it.copy(albums = applySort(it.albums), albumSortMode = mode) }
                 }
         }
     }
 
     /**
-     * Track the direction albums list their photos in, so a card's drawer can tick the one in force.
-     * Its own collector rather than a member of the pair above: that pair orders the grid, this
-     * orders what is inside an album, and the two are set from different places.
+     * Track how each album and folder lists its photos, so a card's drawer can tick the choice in
+     * force for that card. Its own collector rather than a member of the pair above: that pair orders
+     * the grid, this orders what is inside an album, and the two are set from different places.
      */
-    private fun observeAlbumPhotoSortMode() {
+    private fun observeViewChoices() {
         viewModelScope.launch {
             context.settingsDataStore.data
-                .map { AlbumPhotoSortMode.fromOrdinal(it[SettingsKeys.ALBUM_PHOTO_SORT_MODE]) }
+                .map { PhotoViewChoices.from(it) }
                 .distinctUntilChanged()
-                .catch { emit(AlbumPhotoSortMode.Default) }
-                .collect { mode -> _uiState.update { it.copy(albumPhotoSortMode = mode) } }
+                .catch { emit(PhotoViewChoices()) }
+                .collect { choices -> _uiState.update { it.copy(viewChoices = choices) } }
         }
     }
 
@@ -294,6 +302,9 @@ class AlbumsViewModel @Inject constructor(
             combine(localMediaRepo.observeLocalMedia(), folderPrefsFlow) { items, (hiddenUris, pinnedCovers) ->
                 DeviceFolderCards.build(items, hiddenUris, pinnedCovers)
             }
+                // Grouping the whole device library into cards is CPU work that must not run on the
+                // Main dispatcher this collector lives on.
+                .flowOn(Dispatchers.Default)
                 .catch { emit(emptyList()) }
                 .collect { folders ->
                     _uiState.update { it.copy(deviceFolders = folders) }
@@ -309,7 +320,6 @@ class AlbumsViewModel @Inject constructor(
                         mirroredAsAlbum = prefs[SettingsKeys.ALBUM_OPT_IN_FOLDER_NAMES] ?: emptySet(),
                         excludedFromBackup = prefs[SettingsKeys.EXCLUDED_FOLDER_NAMES] ?: emptySet(),
                         hiddenFromTimeline = prefs[SettingsKeys.TIMELINE_EXCLUDED_FOLDER_NAMES] ?: emptySet(),
-                        sortMode = AlbumPhotoSortMode.fromOrdinal(prefs[SettingsKeys.DEVICE_FOLDER_PHOTO_SORT_MODE]),
                     )
                 }
                 .distinctUntilChanged()
@@ -355,6 +365,41 @@ class AlbumsViewModel @Inject constructor(
         }
     }
 
+    /** Track the albums and folders taken off the grid. distinctUntilChanged keeps writes to unrelated
+     *  settings, which the store also emits on, from re-publishing the set. */
+    private fun observeExcludedFromGrid() {
+        viewModelScope.launch {
+            context.settingsDataStore.data
+                .map { it[SettingsKeys.ALBUMS_GRID_EXCLUDED] ?: emptySet() }
+                .distinctUntilChanged()
+                .catch { emit(emptySet()) }
+                .collect { excluded -> _uiState.update { it.copy(excludedFromGrid = excluded) } }
+        }
+    }
+
+    /** Take the cloud album [albumLinkId] off the grid, or put it back when [exclude] is false. Grid
+     *  only: the album, its photos and every other list stay exactly as they are. */
+    fun setAlbumExcludedFromGrid(albumLinkId: String, exclude: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[SettingsKeys.ALBUMS_GRID_EXCLUDED] = AlbumsGridExclusion.withAlbum(
+                    prefs[SettingsKeys.ALBUMS_GRID_EXCLUDED] ?: emptySet(), albumLinkId, exclude,
+                )
+            }
+        }
+    }
+
+    /** [setAlbumExcludedFromGrid] for the device folder [folderName]. No file moves. */
+    fun setFolderExcludedFromGrid(folderName: String, exclude: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[SettingsKeys.ALBUMS_GRID_EXCLUDED] = AlbumsGridExclusion.withFolder(
+                    prefs[SettingsKeys.ALBUMS_GRID_EXCLUDED] ?: emptySet(), folderName, exclude,
+                )
+            }
+        }
+    }
+
     /** The one writer for the grid's per-folder preference sets. Reading and writing inside the same
      *  edit keeps a flip atomic, matching the folder screen's own writer. */
     private suspend fun toggleFolderName(
@@ -390,19 +435,26 @@ class AlbumsViewModel @Inject constructor(
         viewModelScope.launch { toggleFolderName(SettingsKeys.TIMELINE_EXCLUDED_FOLDER_NAMES, folderName) }
     }
 
-    /** Persist the direction every device folder lists its photos in. */
-    fun setDeviceFolderSortMode(mode: AlbumPhotoSortMode) {
-        viewModelScope.launch {
-            context.settingsDataStore.edit { it[SettingsKeys.DEVICE_FOLDER_PHOTO_SORT_MODE] = mode.ordinal }
-        }
+    /** Persist the direction [folderName] lists its photos in; no other folder changes. */
+    fun setDeviceFolderSortMode(folderName: String, mode: AlbumPhotoSortMode) {
+        viewModelScope.launch { PhotoViewChoiceStore.setFolderSort(context, folderName, mode) }
     }
 
-    /** Persist the direction every album lists its photos in, the same key the album's own screen
-     *  writes, so a direction set from a card and one set inside an album are one choice. */
-    fun setAlbumPhotoSortMode(mode: AlbumPhotoSortMode) {
-        viewModelScope.launch {
-            context.settingsDataStore.edit { it[SettingsKeys.ALBUM_PHOTO_SORT_MODE] = mode.ordinal }
-        }
+    /** Persist the span of dates [folderName]'s headers gather; no other folder changes. */
+    fun setDeviceFolderGrouping(folderName: String, grouping: AlbumPhotoGrouping) {
+        viewModelScope.launch { PhotoViewChoiceStore.setFolderGrouping(context, folderName, grouping) }
+    }
+
+    /** Persist the direction [albumLinkId] lists its photos in, the same choice the album's own screen
+     *  writes, so a direction set from its card and one set inside it are one choice. */
+    fun setAlbumPhotoSortMode(albumLinkId: String, mode: AlbumPhotoSortMode) {
+        viewModelScope.launch { PhotoViewChoiceStore.setAlbumSort(context, albumLinkId, mode) }
+    }
+
+    /** Persist the span of dates [albumLinkId]'s headers gather, the same choice the album's own
+     *  screen writes. */
+    fun setAlbumPhotoGrouping(albumLinkId: String, grouping: AlbumPhotoGrouping) {
+        viewModelScope.launch { PhotoViewChoiceStore.setAlbumGrouping(context, albumLinkId, grouping) }
     }
 
     fun refresh() = loadAlbums()

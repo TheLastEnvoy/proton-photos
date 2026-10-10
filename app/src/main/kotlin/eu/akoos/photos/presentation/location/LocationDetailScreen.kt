@@ -34,9 +34,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -45,7 +45,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -53,6 +53,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -63,7 +64,6 @@ import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.PhotoAlbum
 import androidx.compose.material.icons.filled.PrivacyTip
-import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
@@ -86,6 +86,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -94,11 +95,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import eu.akoos.photos.R
 import eu.akoos.photos.domain.entity.GalleryItem
+import eu.akoos.photos.presentation.common.rememberAddLabelsAction
 import eu.akoos.photos.presentation.common.ConfirmDialog
+import eu.akoos.photos.presentation.albums.components.StickyAlbumHeader
+import eu.akoos.photos.presentation.albums.components.rememberHeroScrolledAway
 import eu.akoos.photos.presentation.common.IconBubble
 import eu.akoos.photos.presentation.common.MultiStripState
+import eu.akoos.photos.presentation.common.PrimarySlot
 import eu.akoos.photos.presentation.common.SelectionAction
 import eu.akoos.photos.presentation.common.SelectionDrawer
+import eu.akoos.photos.presentation.common.SelectionShareState
+import eu.akoos.photos.presentation.common.addToAlbumResultText
 import eu.akoos.photos.presentation.common.allLocalOnly
 import eu.akoos.photos.presentation.common.anyCloudOnly
 import eu.akoos.photos.presentation.common.anyLocalOnly
@@ -112,6 +119,10 @@ import eu.akoos.photos.presentation.gallery.LocalThumbnailUrls
 import eu.akoos.photos.presentation.gallery.MoveToFolderHost
 import eu.akoos.photos.presentation.gallery.PhotoCell
 import eu.akoos.photos.presentation.gallery.photoCellInputsFor
+import eu.akoos.photos.presentation.gallery.selectAllCountFor
+import eu.akoos.photos.presentation.gallery.selectionGridBottomPadding
+import eu.akoos.photos.presentation.lock.LocalAppLock
+import eu.akoos.photos.presentation.lock.runWhenOpen
 import eu.akoos.photos.presentation.theme.Accent
 import eu.akoos.photos.presentation.theme.Bg0
 import eu.akoos.photos.presentation.theme.ErrorColor
@@ -119,14 +130,21 @@ import eu.akoos.photos.presentation.theme.FgMute
 import eu.akoos.photos.presentation.theme.FgPrimary
 import eu.akoos.photos.presentation.theme.PillBg
 import eu.akoos.photos.presentation.theme.PillBorder
+import eu.akoos.photos.presentation.util.appLocale
+import eu.akoos.photos.presentation.util.monthYearFormat
+import eu.akoos.photos.util.cityCountryLabel
+import java.util.Date
+import java.util.TimeZone
 
 /**
  * The located-photos body behind the full-screen place page ([PlaceCityScreen]): the hero header,
- * the photo grid with drag multi-select, the shared selection drawer with the full action set (share,
- * add-to-album, move-to-folder, favourite, back up, download, offline, edit metadata, strip, hide,
- * delete) and the save-as-album flow. [modifier] shapes the host, [contentTopPadding] clears a
- * floating header, [headerOverlay] draws one on top, and [showDragHandle] adds a pull-down grip.
- * [onEditMetadata] opens the date + place editor for the current selection, matching the timeline.
+ * the photo grid under month headers with drag multi-select, the shared selection drawer with the
+ * full action set (share, add-to-album, move-to-folder, favourite, back up, download, offline, edit
+ * metadata, strip, hide, delete) and the save-as-album flow. [modifier] shapes the host,
+ * [contentTopPadding] clears a floating header, [onBack] adds the back button over the hero (which
+ * the page's floating header takes over from once the hero has scrolled away), and
+ * [showDragHandle] adds a pull-down grip. [onEditMetadata] opens the date + place editor for the
+ * current selection, matching the timeline.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -137,7 +155,7 @@ fun LocationPhotosContent(
     contentTopPadding: Dp = 0.dp,
     showDragHandle: Boolean = false,
     onEditMetadata: (items: List<GalleryItem>) -> Unit = {},
-    headerOverlay: (@Composable BoxScope.() -> Unit)? = null,
+    onBack: (() -> Unit)? = null,
     viewModel: LocationDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -151,8 +169,16 @@ fun LocationPhotosContent(
     val favoriteIds by viewModel.favoriteIds.collectAsStateWithLifecycle()
     val offlinePinIds by viewModel.offlinePinIds.collectAsStateWithLifecycle()
     val favoriteState by viewModel.favoriteState.collectAsStateWithLifecycle()
+    val shareState by viewModel.sel.shareState.collectAsStateWithLifecycle()
 
     val isSelectionMode = selectedItems.isNotEmpty()
+
+    // The place named in the app language. The hero shows it, and the save-as-album confirmation shows
+    // it and hands it on as the album's name, so the album is named exactly as the dialog said.
+    val locale = appLocale()
+    val placeTitle = remember(state.city, state.countryCode, state.countryName, locale) {
+        cityCountryLabel(state.city, state.countryCode, state.countryName, locale)
+    }
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -166,7 +192,6 @@ fun LocationPhotosContent(
 
     var showSaveAsAlbumConfirm by remember { mutableStateOf(false) }
     var showAddToAlbumSheet by remember { mutableStateOf(false) }
-    val addToAlbumSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // The picker's own "New album" row, which names an album and then adds the selection to it.
     var showCreateAlbumInline by remember { mutableStateOf(false) }
     // Move the device selection into another folder, logged-out, device-data only. The shared host
@@ -182,11 +207,16 @@ fun LocationPhotosContent(
         mutableStateOf<eu.akoos.photos.data.hidden.HiddenFolderRecords.HideSplit?>(null)
     }
 
-    // The VM builds the system-share intent off the UI thread; the screen launches the chooser.
+    // The VM builds the system-share intent off the UI thread; the screen launches the chooser. It can
+    // arrive under the app lock, once cloud originals finish downloading, and the chooser would open above
+    // the lock, so it waits for the unlock.
     val shareChooserTitle = stringResource(R.string.share_chooser_title)
+    val appLock = LocalAppLock.current
     LaunchedEffect(Unit) {
         viewModel.shareIntent.collect { intent ->
-            runCatching { context.startActivity(android.content.Intent.createChooser(intent, shareChooserTitle)) }
+            appLock.runWhenOpen {
+                runCatching { context.startActivity(android.content.Intent.createChooser(intent, shareChooserTitle)) }
+            }
         }
     }
     // Offline-batch result - the pins apply optimistically, this only reports the outcome.
@@ -237,9 +267,12 @@ fun LocationPhotosContent(
         val pi = pendingDeleteIntent ?: return@LaunchedEffect
         // The launch itself can throw if the sender was already consumed; drop the pending work so a
         // stale intent can't force-close the screen.
-        runCatching {
-            deletePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-        }.onFailure { viewModel.clearPendingDeleteIntent() }
+        // The system trash dialog would open above the app lock, so the launch waits for the unlock.
+        appLock.runWhenOpen {
+            runCatching {
+                deletePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+            }.onFailure { viewModel.clearPendingDeleteIntent() }
+        }
     }
     // System write-permission launcher for the batch metadata strip (foreign files on Android 11+).
     val stripPermissionLauncher = rememberLauncherForActivityResult(
@@ -315,9 +348,9 @@ fun LocationPhotosContent(
         val cols = eu.akoos.photos.presentation.gallery.rememberDefaultGridColumns()
         val seamless = eu.akoos.photos.presentation.gallery.rememberSeamlessGrid()
         // Drag-to-select: long-press a photo then drag to sweep a range (shares the timeline gesture).
-        // Cells key on the shared keyOf() (LocalOnly/Synced by uri, CloudOnly by linkId); the swept
-        // keys map back to the whole GalleryItem the selection holds.
-        val selectableKeys = remember(state.items) { state.items.map { keyOf(it) } }
+        // Cells key on the shared locationCellKey() (LocalOnly/Synced by uri, CloudOnly by linkId); the
+        // swept keys map back to the whole GalleryItem the selection holds.
+        val selectableKeys = remember(state.items) { state.items.map { locationCellKey(it) } }
         val keyToIndex = remember(selectableKeys) { selectableKeys.mapIndexed { i, k -> k to i }.toMap() }
         // Armed at the long-press anchor so the cell's release-tap skips toggling the just-selected
         // cell back off (otherwise a stationary long-press would select then immediately deselect).
@@ -331,6 +364,14 @@ fun LocationPhotosContent(
             tapGuard = tapGuard,
             enabled = !isDeleting,
         )
+        // Month headers over the photos, as on the device-folder page. A photo row keeps its position
+        // in the list, so a tap opens the viewer on the photo tapped and the drag sweep's key map above
+        // is untouched; the rows and the list the viewer is handed are the same snapshot.
+        val photos = state.items
+        val gridRows = remember(photos) {
+            val fmt = monthYearFormat()
+            locationGridRows(photos, TimeZone.getDefault()) { fmt.format(Date(it)) }
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(cols),
             state = gridState,
@@ -341,7 +382,7 @@ fun LocationPhotosContent(
                 start = if (seamless) 0.dp else 20.dp,
                 end = if (seamless) 0.dp else 20.dp,
                 top = contentTopPadding,
-                bottom = 24.dp,
+                bottom = selectionGridBottomPadding(24.dp, isSelectionMode),
             ),
             horizontalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 6.dp),
             verticalArrangement = Arrangement.spacedBy(if (seamless) 2.dp else 6.dp),
@@ -353,13 +394,14 @@ fun LocationPhotosContent(
                 Box(modifier = Modifier.padding(horizontal = if (seamless) 20.dp else 0.dp)) {
                 eu.akoos.photos.presentation.albums.components.AlbumHeroHeader(
                     coverModel = coverModel,
-                    title = state.placeName,
+                    title = placeTitle,
                     photoCountText = countLabel,
                     coverParallax = {
                         if (gridState.firstVisibleItemIndex == 0)
                             gridState.firstVisibleItemScrollOffset.toFloat() else 0f
                     },
-                    titleActions = if (state.items.isNotEmpty()) {
+                    // A Drive album needs an account, so the action is not offered to a guest at all.
+                    titleActions = if (isSignedIn && state.items.isNotEmpty()) {
                         {
                             // Create a Drive album from this place - a progress ring while the
                             // round-trip runs, otherwise the library-add glyph.
@@ -411,41 +453,49 @@ fun LocationPhotosContent(
                     }
                 }
             } else {
-                itemsIndexed(
-                    items = state.items,
-                    key = { _, item -> keyOf(item) },
-                ) { index, item ->
-                    val isSelected = item in selectedItems
-                    val inputs = remember(item, favoriteIds) {
-                        photoCellInputsFor(item, favoriteIds = favoriteIds)
+                items(
+                    items = gridRows,
+                    key = { row -> row.key },
+                    span = { row -> GridItemSpan(if (row is LocationGridRow.Header) maxLineSpan else 1) },
+                    contentType = { row -> row is LocationGridRow.Header },
+                ) { row ->
+                    when (row) {
+                        is LocationGridRow.Header -> LocationMonthHeader(label = row.label, seamless = seamless)
+                        is LocationGridRow.Photo -> {
+                            val item = row.item
+                            val isSelected = item in selectedItems
+                            val inputs = remember(item, favoriteIds) {
+                                photoCellInputsFor(item, favoriteIds = favoriteIds)
+                            }
+                            PhotoCell(
+                                imageData = inputs.imageData,
+                                stableKey = inputs.stableKey,
+                                isVideo = inputs.isVideo,
+                                isLocalVideo = inputs.isLocalVideo,
+                                durationMs = inputs.durationMs,
+                                isPlaceholder = inputs.isPlaceholder,
+                                selected = isSelected,
+                                isSelectionMode = isSelectionMode,
+                                showCloudBadge = inputs.showCloudBadge,
+                                showSyncedBadge = inputs.showSyncedBadge,
+                                isFavorite = inputs.isFavorite,
+                                typeBadgeRes = inputs.typeBadgeRes,
+                                typeBadgeCdRes = inputs.typeBadgeCdRes,
+                                columns = cols,
+                                cornerRadius = if (seamless) 0.dp else 10.dp,
+                                onClick = {
+                                    // Skip the release-tap that follows a long-press select; it would
+                                    // otherwise toggle the just-anchored cell back off.
+                                    if (tapGuard.value) tapGuard.value = false
+                                    else if (isSelectionMode) viewModel.toggleSelection(item)
+                                    else onPhotoClick(photos, row.index)
+                                },
+                                // Long-press + drag is handled by the grid-level drag-select; a plain
+                                // long-press there selects this single cell and enters selection mode.
+                                onLongClick = null,
+                            )
+                        }
                     }
-                    PhotoCell(
-                        imageData = inputs.imageData,
-                        stableKey = inputs.stableKey,
-                        isVideo = inputs.isVideo,
-                        isLocalVideo = inputs.isLocalVideo,
-                        durationMs = inputs.durationMs,
-                        isPlaceholder = inputs.isPlaceholder,
-                        selected = isSelected,
-                        isSelectionMode = isSelectionMode,
-                        showCloudBadge = inputs.showCloudBadge,
-                        showSyncedBadge = inputs.showSyncedBadge,
-                        isFavorite = inputs.isFavorite,
-                        typeBadgeRes = inputs.typeBadgeRes,
-                        typeBadgeCdRes = inputs.typeBadgeCdRes,
-                        columns = cols,
-                        cornerRadius = if (seamless) 0.dp else 10.dp,
-                        onClick = {
-                            // Skip the release-tap that follows a long-press select; it would
-                            // otherwise toggle the just-anchored cell back off.
-                            if (tapGuard.value) tapGuard.value = false
-                            else if (isSelectionMode) viewModel.toggleSelection(item)
-                            else onPhotoClick(state.items, index)
-                        },
-                        // Long-press + drag is handled by the grid-level drag-select; a plain
-                        // long-press there selects this single cell and enters selection mode.
-                        onLongClick = null,
-                    )
                 }
             }
         }
@@ -484,28 +534,33 @@ fun LocationPhotosContent(
         )
 
         // Selection drawer: the shared surface every multi-select uses, so the located-photos bulk
-        // actions all sit in one list, in the order every other surface lists them.
-        val allSelected = state.items.isNotEmpty() && selectedItems.size == state.items.size
+        // actions all sit in one list, in the order every other surface lists them. Its header's
+        // Select all takes in every photo of the place.
+        val selectAllCount = selectAllCountFor(total = state.items.size, selected = selectedItems.size)
         // Which way the offline row goes, so it names the press rather than the state: a pin while
         // anything pinnable in the selection is still un-pinned, a removal once none is.
         val offlinePinsSelection = remember(selectedItems, offlinePinIds) {
             offlineTurnsOn(offlinePinnableLinkIds(selectedItems), offlinePinIds)
         }
+        val sharing = shareState as? SelectionShareState.Working
+        val addLabelsAction = rememberAddLabelsAction(
+            items = remember(selectedItems) { selectedItems.toList() },
+            onDone = { msg ->
+                scope.launch { snackbarHostState.showSnackbar(msg) }
+                viewModel.clearSelection()
+            },
+        )
         val locationSelectionActions = buildList {
-            add(
-                SelectionAction(
-                    icon = Icons.Default.SelectAll,
-                    label = stringResource(
-                        if (allSelected) R.string.gallery_deselect_all else R.string.select_all,
-                    ),
-                    onClick = { if (allSelected) viewModel.clearSelection() else viewModel.selectAll() },
-                )
-            )
+            // Rings while cloud originals download for the chooser and takes no second tap meanwhile.
             add(
                 SelectionAction(
                     icon = Icons.Default.Share,
                     label = stringResource(R.string.sel_label_share),
+                    working = sharing != null,
+                    progress = sharing?.let { if (it.total > 0) it.done.toFloat() / it.total else 0f },
+                    enabled = sharing == null,
                     onClick = { viewModel.shareSelected() },
+                    slot = PrimarySlot.Share,
                 )
             )
             // Add-to-album needs a Drive destination, so it stays behind a signed-in session.
@@ -515,6 +570,7 @@ fun LocationPhotosContent(
                         icon = Icons.Default.PhotoAlbum,
                         label = stringResource(R.string.gallery_add_to_album),
                         onClick = { showAddToAlbumSheet = true },
+                        slot = PrimarySlot.Organize,
                     )
                 )
             }
@@ -526,6 +582,7 @@ fun LocationPhotosContent(
                         icon = Icons.AutoMirrored.Filled.DriveFileMove,
                         label = stringResource(R.string.move_to_folder),
                         onClick = { showMoveSheet = true },
+                        slot = PrimarySlot.Organize,
                     )
                 )
             }
@@ -539,6 +596,7 @@ fun LocationPhotosContent(
                     onClick = { viewModel.toggleSelectedFavorite() },
                 )
             )
+            addLabelsAction?.let(::add)
             // Back up the not-yet-uploaded (LocalOnly) photos in the selection. Needs a Drive
             // destination, so it stays behind a signed-in session.
             if (isSignedIn && anyLocalOnly(selectedItems)) {
@@ -632,6 +690,7 @@ fun LocationPhotosContent(
                     tint = ErrorColor,
                     enabled = !isDeleting,
                     onClick = { showDeleteSheet = true },
+                    slot = PrimarySlot.Delete,
                 )
             )
         }
@@ -644,6 +703,12 @@ fun LocationPhotosContent(
             // photos needs no deliberate pull or tap first.
             contentScrolling = gridState.isScrollInProgress,
             modifier = Modifier.align(Alignment.BottomCenter),
+            selectAllCount = selectAllCount,
+            onSelectAll = if (selectAllCount != null) {
+                { viewModel.selectAll() }
+            } else {
+                null
+            },
         )
 
         // Jump-to-top pill - appears once scrolled down, hidden during selection so it never
@@ -674,9 +739,66 @@ fun LocationPhotosContent(
             modifier = Modifier.align(Alignment.BottomCenter),
         )
 
-        // A full-screen host draws its floating pill header last so it sits above the grid; the sheet
-        // passes none and shows the pull-down grip instead.
-        headerOverlay?.invoke(this)
+        // A full-screen host gets the back button over the hero, then the floating header with the
+        // place's name once the hero has scrolled away; the sheet passes none and shows the pull-down
+        // grip instead.
+        if (onBack != null) {
+            val heroGone by rememberHeroScrolledAway(gridState)
+            val stickyShown = heroGone && !isSelectionMode
+            AnimatedVisibility(
+                visible = !stickyShown,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(start = 12.dp, top = 8.dp),
+            ) {
+                IconBubble(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = if (isSelectionMode)
+                        stringResource(R.string.gallery_cancel_selection) else stringResource(R.string.close),
+                    onClick = { if (isSelectionMode) viewModel.clearSelection() else onBack() },
+                    diameter = 40.dp,
+                    iconSize = 18.dp,
+                    background = PillBg,
+                    borderColor = PillBorder,
+                    tint = FgPrimary,
+                )
+            }
+            StickyAlbumHeader(
+                visible = stickyShown,
+                title = placeTitle,
+                onBack = onBack,
+                modifier = Modifier.align(Alignment.TopCenter),
+                trailing = if (isSignedIn && state.items.isNotEmpty()) {
+                    {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(PillBg, CircleShape)
+                                .border(0.5.dp, PillBorder, CircleShape)
+                                .clickable(enabled = !state.isSavingAsAlbum) { showSaveAsAlbumConfirm = true },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (state.isSavingAsAlbum) {
+                                CircularProgressIndicator(
+                                    color = Accent, strokeWidth = 2.dp,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.LibraryAdd,
+                                    contentDescription = stringResource(R.string.location_save_as_album),
+                                    tint = Accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                } else null,
+            )
+        }
     }
 
     if (showStripPicker) {
@@ -721,7 +843,6 @@ fun LocationPhotosContent(
         eu.akoos.photos.presentation.gallery.GalleryAddToAlbumDialog(
             selectedItems = selectedItems,
             cloudAlbums = albums,
-            sheetState = addToAlbumSheetState,
             onCreateNew = {
                 showAddToAlbumSheet = false
                 showCreateAlbumInline = true
@@ -730,12 +851,7 @@ fun LocationPhotosContent(
                 showAddToAlbumSheet = false
                 viewModel.addSelectedToAlbum(album.linkId) { joined, queued ->
                     scope.launch {
-                        val msg = when {
-                            joined > 0 -> context.getString(R.string.gallery_added_to_album, joined, album.name)
-                            queued > 0 -> context.getString(R.string.device_folder_added_to_album)
-                            else -> context.getString(R.string.album_picker_empty)
-                        }
-                        snackbarHostState.showSnackbar(msg)
+                        snackbarHostState.showSnackbar(addToAlbumResultText(context.resources, joined, queued, album.name))
                     }
                 }
             },
@@ -752,13 +868,7 @@ fun LocationPhotosContent(
                 showCreateAlbumInline = false
                 viewModel.createAlbumThenAddSelected(name) { joined, queued, error ->
                     scope.launch {
-                        val msg = when {
-                            error != null -> error
-                            joined > 0 -> context.getString(R.string.gallery_added_to_album, joined, name)
-                            queued > 0 -> context.getString(R.string.device_folder_added_to_album)
-                            else -> context.getString(R.string.album_picker_empty)
-                        }
-                        snackbarHostState.showSnackbar(msg)
+                        snackbarHostState.showSnackbar(error ?: addToAlbumResultText(context.resources, joined, queued, name))
                     }
                 }
             },
@@ -769,12 +879,12 @@ fun LocationPhotosContent(
     if (showSaveAsAlbumConfirm) {
         ConfirmDialog(
             title = stringResource(R.string.location_save_as_album_confirm_title),
-            message = stringResource(R.string.location_save_as_album_confirm_body_fmt, state.placeName),
+            message = stringResource(R.string.location_save_as_album_confirm_body_fmt, placeTitle),
             confirmLabel = stringResource(R.string.action_save),
             dismissLabel = stringResource(R.string.cancel),
             onConfirm = {
                 showSaveAsAlbumConfirm = false
-                viewModel.saveAsAlbum()
+                viewModel.saveAsAlbum(placeTitle)
             },
             onDismiss = { showSaveAsAlbumConfirm = false },
         )
@@ -797,10 +907,21 @@ fun LocationPhotosContent(
     )
 }
 
-/** Cell / drag-select key: local uri where a device copy exists, else the cloud linkId, prefixed so
- *  the two id spaces never collide. Shared by the grid cells, the drag sweep and the index map. */
-private fun keyOf(item: GalleryItem): String = when (item) {
-    is GalleryItem.LocalOnly -> "L:" + item.local.uri
-    is GalleryItem.Synced    -> "S:" + item.local.uri
-    is GalleryItem.CloudOnly -> "C:" + item.cloud.linkId
+/** A month header over the place grid's photos, styled like the device-folder and album pages'. The
+ *  label keeps clear of the screen edge in seamless mode, where the tiles below bleed to 0. */
+@Composable
+private fun LocationMonthHeader(label: String, seamless: Boolean) {
+    Text(
+        label,
+        color = FgPrimary,
+        fontSize = 22.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = (-0.44).sp,
+        modifier = Modifier.fillMaxWidth().padding(
+            start = if (seamless) 20.dp else 4.dp,
+            end = if (seamless) 20.dp else 4.dp,
+            top = 24.dp,
+            bottom = 10.dp,
+        ),
+    )
 }

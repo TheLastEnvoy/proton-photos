@@ -22,6 +22,9 @@
 
 package eu.akoos.photos.presentation.albums
 
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.GridOff
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,8 +37,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.FileDownload
@@ -71,10 +72,12 @@ import kotlinx.coroutines.launch
 /**
  * Every album action as a drawer, so the hero header carries one control beside the count instead of
  * a row of pills. Follows the app's other action sheets (see PhotoShareSheet): a pill per row with a
- * leading glyph, a label, and a trailing tick on the active sort.
+ * leading glyph, a label, and a trailing tick on what is already in place.
  *
- * Sections follow the app's action-sheet taxonomy: what runs on the album's photos, then the album's
- * settings, then the sort, then what cannot be undone below a rule.
+ * How the photos are laid out leads, as the [AlbumViewOptions] chips under the title, so the sort and
+ * the grouping are in sight on opening rather than below every action. The sections then follow the
+ * app's action-sheet taxonomy: what runs on the album's photos, then the album's settings, then what
+ * cannot be undone below a rule.
  *
  * Which rows appear follows who is looking: [canAddPhotos] covers an owner and an editor on a shared
  * album, [isSharedWithMe] swaps download for save-to-library, drops rename and adds leave. Both hides
@@ -89,8 +92,8 @@ import kotlinx.coroutines.launch
 internal fun AlbumActionsSheet(
     sheetState: SheetState,
     isSharedWithMe: Boolean,
-    /** True once this album has sharing set up. Ticks the share row with the same mark the active
-     *  sort carries, so a share already in place is visible without opening it. */
+    /** True once this album has sharing set up. Ticks the share row, so a share already in place is
+     *  visible without opening it. */
     isShared: Boolean,
     canAddPhotos: Boolean,
     hasPhotos: Boolean,
@@ -99,9 +102,12 @@ internal fun AlbumActionsSheet(
     /** Determinate share of that work, or null before it can report a count. */
     copyFraction: Float?,
     sortMode: AlbumPhotoSortMode,
+    grouping: AlbumPhotoGrouping = AlbumPhotoGrouping.Default,
     /** True while this album's photos are kept out of the main feed. About the photos, which [onHide]
      *  is not: that one takes the album itself out of every list. */
     isHiddenFromTimeline: Boolean,
+    /** True while the album's card is off the grid, which turns [onToggleExcludedFromGrid]'s row into its way back. */
+    isExcludedFromGrid: Boolean = false,
     onDismiss: () -> Unit,
     onAddPhotos: () -> Unit,
     onShareOrInfo: () -> Unit,
@@ -110,8 +116,13 @@ internal fun AlbumActionsSheet(
     onRename: () -> Unit,
     onToggleHiddenFromTimeline: () -> Unit,
     onHide: () -> Unit,
+    onToggleExcludedFromGrid: () -> Unit = {},
+    /** Null drops the delete row, which an owner alone has. */
+    onDelete: (() -> Unit)? = null,
     onSlideshow: () -> Unit,
     onSortSelected: (AlbumPhotoSortMode) -> Unit,
+    /** Null drops the grouping row. */
+    onGroupingSelected: ((AlbumPhotoGrouping) -> Unit)? = null,
     onLeaveAlbum: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -148,11 +159,15 @@ internal fun AlbumActionsSheet(
                 modifier = Modifier.padding(bottom = 16.dp),
             )
 
-            // Share and the download / save row are on every album, so this group is never empty.
-            ActionSheetSectionHeading(
-                stringResource(R.string.action_sheet_actions_heading),
-                first = true,
+            AlbumViewOptions(
+                sortMode = sortMode,
+                onSortSelected = onSortSelected,
+                grouping = grouping,
+                onGroupingSelected = onGroupingSelected,
             )
+
+            // Share and the download / save row are on every album, so this group is never empty.
+            ActionSheetSectionHeading(stringResource(R.string.action_sheet_actions_heading))
             if (canAddPhotos) {
                 ActionSheetRow(
                     icon = Icons.Default.Add,
@@ -209,49 +224,52 @@ internal fun AlbumActionsSheet(
                 )
             }
 
-            // Both hides are on every album, so this group is never empty; rename is the owner's alone.
-            ActionSheetSectionHeading(stringResource(R.string.action_sheet_settings_heading))
+            // These settings are the owner's: an album shared with the user has its photos on the
+            // sharer's side, so they are neither in the user's timeline nor a card on the user's Albums
+            // grid, and there is nothing here for a guest to hide or exclude.
             if (!isSharedWithMe) {
+                ActionSheetSectionHeading(stringResource(R.string.action_sheet_settings_heading))
                 ActionSheetRow(
                     icon = Icons.Default.Edit,
                     title = stringResource(R.string.album_rename),
                     onClick = { close(onRename) },
                 )
                 Spacer(Modifier.height(8.dp))
-            }
-            // The weaker of the two hides, and the one that carries a tick: it writes the same
-            // per-album key the Albums grid's drawer and the Settings picker do, so the state is the
-            // current one wherever it was set. The row below is the stronger action and stays a
-            // one-way choice.
-            ActionSheetRow(
-                icon = Icons.Default.HideImage,
-                title = stringResource(R.string.device_folder_hide_from_timeline),
-                onClick = { close(onToggleHiddenFromTimeline) },
-                showCheck = isHiddenFromTimeline,
-            )
-            Spacer(Modifier.height(8.dp))
-            ActionSheetRow(
-                icon = Icons.Default.VisibilityOff,
-                title = stringResource(R.string.albums_hide_album),
-                onClick = { close(onHide) },
-            )
-
-            ActionSheetSectionHeading(stringResource(R.string.albums_sort_heading))
-            AlbumPhotoSortMode.entries.forEachIndexed { index, mode ->
-                if (index > 0) Spacer(Modifier.height(8.dp))
+                // The weaker of the two hides, and the one that carries a tick: it writes the same
+                // per-album key the Albums grid's drawer and the Settings picker do, so the state is the
+                // current one wherever it was set. The row below is the stronger action and stays a
+                // one-way choice.
                 ActionSheetRow(
-                    icon = when (mode) {
-                        AlbumPhotoSortMode.NewestFirst -> Icons.Default.ArrowDownward
-                        AlbumPhotoSortMode.OldestFirst -> Icons.Default.ArrowUpward
-                    },
+                    icon = Icons.Default.HideImage,
+                    title = stringResource(R.string.device_folder_hide_from_timeline),
+                    onClick = { close(onToggleHiddenFromTimeline) },
+                    showCheck = isHiddenFromTimeline,
+                )
+                Spacer(Modifier.height(8.dp))
+                ActionSheetRow(
+                    icon = Icons.Default.VisibilityOff,
+                    title = stringResource(R.string.albums_hide_album),
+                    onClick = { close(onHide) },
+                )
+                Spacer(Modifier.height(8.dp))
+                ActionSheetRow(
+                    icon = if (isExcludedFromGrid) Icons.Default.GridOn else Icons.Default.GridOff,
                     title = stringResource(
-                        when (mode) {
-                            AlbumPhotoSortMode.NewestFirst -> R.string.sort_newest_first
-                            AlbumPhotoSortMode.OldestFirst -> R.string.sort_oldest_first
-                        },
+                        if (isExcludedFromGrid) R.string.albums_show_in_albums else R.string.albums_exclude_from_albums,
                     ),
-                    onClick = { close { onSortSelected(mode) } },
-                    showCheck = mode == sortMode,
+                    onClick = { close(onToggleExcludedFromGrid) },
+                )
+            }
+
+            if (!isSharedWithMe && onDelete != null) {
+                // Deleting takes the album off Drive, so it keeps the rule above it and the red
+                // treatment it carries on the Albums grid's own drawer.
+                HorizontalDivider(color = Line2, modifier = Modifier.padding(vertical = 16.dp))
+                ActionSheetRow(
+                    icon = Icons.Default.DeleteOutline,
+                    title = stringResource(R.string.delete_button_permanently),
+                    onClick = { close(onDelete) },
+                    destructive = true,
                 )
             }
 

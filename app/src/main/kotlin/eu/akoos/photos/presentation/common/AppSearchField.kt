@@ -25,6 +25,7 @@ package eu.akoos.photos.presentation.common
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,9 +34,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
@@ -51,11 +55,18 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import eu.akoos.photos.R
 import eu.akoos.photos.presentation.theme.AppColors
 
@@ -78,6 +89,14 @@ internal fun AppSearchField(
     iconSize: Dp = 20.dp,
     textSize: TextUnit = TextUnit.Unspecified,
     onFocusChanged: (Boolean) -> Unit = {},
+    // A field whose keyboard key does something (a picker committing the typed name) passes its own.
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    // True while something besides the text narrows the results (shown as pills beneath the field), which
+    // turns the border to the accent colour like typed text does.
+    filtered: Boolean = false,
+    // What Backspace does on an empty field, such as taking the last pill away.
+    onBackspaceWhenEmpty: (() -> Unit)? = null,
 ) {
     val colors = AppColors.current
     val focusRequester = remember { FocusRequester() }
@@ -94,7 +113,7 @@ internal fun AppSearchField(
             .background(background)
             .border(
                 1.dp,
-                if (query.isNotEmpty()) colors.accent else colors.line,
+                if (query.isNotEmpty() || filtered) colors.accent else colors.line,
                 RoundedCornerShape(14.dp),
             )
             .padding(start = 12.dp, end = 6.dp),
@@ -117,10 +136,22 @@ internal fun AppSearchField(
                 singleLine = true,
                 textStyle = TextStyle(color = colors.fgPrimary, fontSize = textSize),
                 cursorBrush = SolidColor(colors.accent),
+                keyboardOptions = keyboardOptions,
+                keyboardActions = keyboardActions,
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focusRequester)
-                    .onFocusChanged { onFocusChanged(it.isFocused) },
+                    .onFocusChanged { onFocusChanged(it.isFocused) }
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Backspace &&
+                            query.isEmpty() && onBackspaceWhenEmpty != null
+                        ) {
+                            onBackspaceWhenEmpty()
+                            true
+                        } else {
+                            false
+                        }
+                    },
             )
         }
         if (query.isNotEmpty()) {
@@ -139,5 +170,51 @@ internal fun AppSearchField(
                 )
             }
         }
+    }
+}
+
+/** One thing that narrows a search, shown as a pill beneath the field: its [label] and what removes it. */
+internal data class SearchFieldTerm(
+    val label: String,
+    val removeDescription: String? = null,
+    val onRemove: () -> Unit,
+)
+
+/** What narrows a search, as a sideways-scrolling row of [SearchTermPill]s beneath the field; nothing at all
+ *  while there is none, so the header does not grow. */
+@Composable
+internal fun SearchTermRow(terms: List<SearchFieldTerm>, modifier: Modifier = Modifier) {
+    if (terms.isEmpty()) return
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        terms.forEach { SearchTermPill(it, large = true) }
+    }
+}
+
+/** A [SearchFieldTerm] as a pill; a tap anywhere on it removes it. Shared with the Add labels field. */
+@Composable
+internal fun SearchTermPill(term: SearchFieldTerm, large: Boolean = false) {
+    val colors = AppColors.current
+    Row(
+        modifier = Modifier
+            .height(if (large) 34.dp else 24.dp)
+            .clip(RoundedCornerShape(if (large) 14.dp else 8.dp))
+            .background(
+                if (large) colors.accent.copy(alpha = 0.18f).compositeOver(colors.bg0)
+                else colors.accent.copy(alpha = 0.18f),
+            )
+            .clickable { term.onRemove() }
+            .padding(start = if (large) 12.dp else 8.dp, end = if (large) 8.dp else 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (large) 4.dp else 2.dp),
+    ) {
+        Text(term.label, color = colors.accent, fontSize = if (large) 14.sp else 11.sp, maxLines = 1)
+        Icon(
+            Icons.Filled.Close, contentDescription = term.removeDescription, tint = colors.accent,
+            modifier = Modifier.size(if (large) 16.dp else 12.dp),
+        )
     }
 }

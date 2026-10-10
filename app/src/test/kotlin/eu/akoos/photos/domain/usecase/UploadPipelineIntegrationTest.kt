@@ -27,10 +27,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import androidx.work.Configuration
-import androidx.work.WorkManager
 import io.mockk.coEvery
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -46,6 +45,8 @@ import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.test.runTest
 import me.proton.core.domain.entity.UserId
 import eu.akoos.photos.data.db.AppDatabase
+import eu.akoos.photos.data.db.dao.PhotoListingDao
+import eu.akoos.photos.data.db.dao.PhotoPairingRow
 import eu.akoos.photos.data.db.dao.SyncStateDao
 import eu.akoos.photos.data.db.dao.UploadAlbumTargetDao
 import eu.akoos.photos.data.preferences.SettingsKeys
@@ -67,9 +68,13 @@ import eu.akoos.photos.domain.entity.ShareMember
 import eu.akoos.photos.domain.entity.SharedPhoto
 import eu.akoos.photos.domain.entity.SyncState
 import eu.akoos.photos.domain.entity.SyncStatus
+import eu.akoos.photos.domain.repository.DeviceMediaScan
 import eu.akoos.photos.domain.repository.DrivePhotoRepository
 import eu.akoos.photos.domain.repository.LocalMediaRepository
+import eu.akoos.photos.domain.repository.SyncStateRepository
+import eu.akoos.photos.util.AlbumListEventBus
 import eu.akoos.photos.util.NetworkObserver
+import eu.akoos.photos.util.WorkManagerTestSetup
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -104,6 +109,7 @@ class UploadPipelineIntegrationTest {
     private lateinit var cloud: FakeDrivePhotoRepository
     private lateinit var local: FakeLocalMediaRepository
     private lateinit var networkObserver: NetworkObserver
+    private lateinit var albumEvents: AlbumListEventBus
     private lateinit var context: Context
 
     private lateinit var uploadUseCase: UploadPendingUseCase
@@ -125,15 +131,7 @@ class UploadPipelineIntegrationTest {
         // SyncWorker.runNow(context) can enqueue without throwing. A synchronous executor keeps it
         // deterministic; the enqueued worker carries a CONNECTED network constraint that is never
         // satisfied in this JVM, so its body never runs and cannot perturb the DB we assert on.
-        runCatching {
-            WorkManager.initialize(
-                context,
-                Configuration.Builder()
-                    .setExecutor { it.run() }
-                    .setTaskExecutor { it.run() }
-                    .build(),
-            )
-        }
+        WorkManagerTestSetup.initialize(context)
 
         // Start each test from an empty settings DataStore so gate keys never leak in from a
         // prior test (the delegate caches one instance per file name across the JVM).
@@ -154,6 +152,8 @@ class UploadPipelineIntegrationTest {
 
         networkObserver = mockk(relaxed = true)
         coEvery { networkObserver.currentlyOnWifi() } returns true
+        // Relaxed so the album-changed signal a join sends can be counted with verify.
+        albumEvents = mockk(relaxed = true)
 
         uploadUseCase = UploadPendingUseCase(
             syncStateRepo = syncRepo,
@@ -169,8 +169,9 @@ class UploadPipelineIntegrationTest {
             videoCompression = mockk(relaxed = true),
             context = context,
             appScope = appScope,
+            albumListEvents = albumEvents,
         )
-        reconcileUseCase = ReconcileSyncStateUseCase(local, cloud, syncRepo, context)
+        reconcileUseCase = ReconcileSyncStateUseCase(local, cloud, syncRepo, fakeCloudListing(), context, appScope)
         forceUploadUseCase = ForceUploadLocalUrisUseCase(context, syncRepo, cloud, targetDao)
     }
 
@@ -238,6 +239,16 @@ class UploadPipelineIntegrationTest {
     }
 
     private suspend fun row(uri: String): SyncState? = syncRepo.getByUri(uri)
+
+    /** The cloud listing reconcile reads, answering from the fake cloud the way the listing table
+     *  would: every photo it holds at that moment, newest first. */
+    private fun fakeCloudListing(): PhotoListingDao = mockk {
+        coEvery { getOwnStreamPairingRows(userId.id) } answers {
+            cloud.photos.value.sortedByDescending { it.captureTime }.map {
+                PhotoPairingRow(it.linkId, it.contentHash, it.captureTime, it.displayName, it.sizeBytes)
+            }
+        }
+    }
 
     // ── Scenario 1: manual upload ───────────────────────────────────────────────────
 
@@ -365,6 +376,8 @@ class UploadPipelineIntegrationTest {
         assertEquals(SyncStatus.SYNCED, row(uri)!!.status)
         // The target row is removed once the add succeeds.
         assertTrue("target must be cleared after a successful add", targetDao.getTargetsFor(uri).isEmpty())
+        // The join tells an open album and the album grid to reload.
+        verify(exactly = 1) { albumEvents.notifyChanged() }
     }
 
     // ── Scenario 5: album-add, add fails then retries ───────────────────────────────
@@ -395,6 +408,265 @@ class UploadPipelineIntegrationTest {
         val cloudId = cloud.photos.value.single().linkId
         assertEquals(listOf(cloudId), cloud.albumMembers(albumLinkId))
         assertTrue("target must be cleared after the retry lands", targetDao.getTargetsFor(uri).isEmpty())
+    }
+
+    // ── Scenario 5b: album-add, the add returns without the photo ──────────────────
+
+    @Test
+    fun `an album-add that comes back without the photo keeps the target row and lands on the next pass`() = runTest {
+        val uri = "content://media/a3"
+        val albumLinkId = "album-refused"
+        local.add(localItem(uri))
+
+        // The add returns instead of throwing but lists the photo as failed, which is how a request
+        // that never reached the server comes back. That is not a join.
+        cloud.rejectAddPhotosOnce = true
+        forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+        uploadUseCase(userId)
+
+        assertEquals(SyncStatus.SYNCED, row(uri)!!.status)
+        assertTrue("a refused add must not read as joined", cloud.albumMembers(albumLinkId).isEmpty())
+        assertEquals(
+            "a refused add must leave the target queued for the next drain",
+            listOf(albumLinkId),
+            targetDao.getTargetsFor(uri),
+        )
+        verify(exactly = 0) { albumEvents.notifyChanged() }
+
+        // The next pass's drain joins the album, drops the pair and signals the album screens.
+        uploadUseCase(userId)
+        val cloudId = cloud.photos.value.single().linkId
+        assertEquals(listOf(cloudId), cloud.albumMembers(albumLinkId))
+        assertTrue("target must be cleared once the photo joins", targetDao.getTargetsFor(uri).isEmpty())
+        verify(exactly = 1) { albumEvents.notifyChanged() }
+    }
+
+    // ── Scenario 5c: album-add that landed but lost its reply ──────────────────────
+
+    @Test
+    fun `an album-add that landed without its reply is found in the album and not sent again`() = runTest {
+        val uri = "content://media/a4"
+        val albumLinkId = "album-lost-reply"
+        local.add(localItem(uri))
+
+        // The server took the add but the reply reports the photo as failed.
+        cloud.loseAddReplyOnce = true
+        forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+        uploadUseCase(userId)
+
+        val cloudId = cloud.photos.value.single().linkId
+        assertEquals(listOf(cloudId), cloud.albumMembers(albumLinkId))
+        assertTrue("an add the album already holds must clear its target", targetDao.getTargetsFor(uri).isEmpty())
+        verify(exactly = 1) { albumEvents.notifyChanged() }
+
+        // Nothing is left to drain, so a later pass never sends the add again.
+        uploadUseCase(userId)
+        assertEquals(1, cloud.callLog.count { it == "ADD:$albumLinkId" })
+    }
+
+    // ── Scenario 5d: album-add for a photo mid-upload ───────────────────────────────
+
+    @Test
+    fun `an album-add for a photo mid-upload joins once that upload lands and uploads it once`() = runTest {
+        val uri = "content://media/a5"
+        val albumLinkId = "album-mid-upload"
+        local.add(localItem(uri))
+        forceUploadUseCase.forceUpload(userId, listOf(uri))
+        // The user adds the photo to an album while its backup is in flight.
+        var statusMidUpload: SyncStatus? = null
+        cloud.onUploadStarted = {
+            cloud.onUploadStarted = null
+            statusMidUpload = row(uri)?.status
+            forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+        }
+
+        uploadUseCase(userId)
+
+        assertEquals(SyncStatus.UPLOADING, statusMidUpload)
+        val cloudId = cloud.photos.value.single().linkId
+        assertEquals(listOf(cloudId), cloud.albumMembers(albumLinkId))
+        assertTrue("the upload in flight must join the target", targetDao.getTargetsFor(uri).isEmpty())
+        row(uri)!!.let {
+            assertEquals(SyncStatus.SYNCED, it.status)
+            assertEquals("a backed-up row carries no intent", false, it.queued)
+        }
+
+        // Nothing is left to upload or join, so a later pass sends neither again.
+        uploadUseCase(userId)
+        assertEquals(1, cloud.callLog.count { it == "UPLOAD" })
+        assertEquals(1, cloud.callLog.count { it == "ADD:$albumLinkId" })
+    }
+
+    @Test
+    fun `an album-add for a photo another save is uploading never uploads it again and joins once it lands`() = runTest {
+        val uri = "content://media/a6"
+        val albumLinkId = "album-held-upload"
+        local.add(localItem(uri))
+        // A first pass spends the once-per-process stale-claim reset, long over by the time a save runs.
+        uploadUseCase(userId)
+        // A save outside the backup pass, such as the editor's replacement upload, holds the row.
+        syncRepo.upsert(localOnlyRow(uri).copy(status = SyncStatus.UPLOADING), userId)
+        syncRepo.markQueued(uri, QueueSource.EDITOR, System.currentTimeMillis())
+
+        forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+        assertEquals(listOf(albumLinkId), targetDao.getTargetsFor(uri))
+        assertEquals("the held row must not be seeded again", SyncStatus.UPLOADING, row(uri)!!.status)
+
+        // A pass while that upload runs leaves the row to it.
+        uploadUseCase(userId)
+        assertTrue("a photo mid-upload must not upload a second time", cloud.callLog.none { it == "UPLOAD" })
+        assertEquals(SyncStatus.UPLOADING, row(uri)!!.status)
+
+        // The save lands, and the next pass's drain joins the album.
+        syncRepo.upsert(row(uri)!!.copy(cloudFileId = "cloud-saved", status = SyncStatus.SYNCED), userId)
+        syncRepo.clearQueuedForSynced(uri)
+        uploadUseCase(userId)
+
+        assertEquals(listOf("cloud-saved"), cloud.albumMembers(albumLinkId))
+        assertTrue("target must be cleared once the photo joins", targetDao.getTargetsFor(uri).isEmpty())
+        assertTrue(cloud.callLog.none { it == "UPLOAD" })
+    }
+
+    @Test
+    fun `an album-add whose upload lands before its intent is stamped leaves no intent on the backed-up row`() = runTest {
+        val uri = "content://media/a7"
+        val albumLinkId = "album-late-stamp"
+        local.add(localItem(uri))
+        syncRepo.upsert(localOnlyRow(uri).copy(cloudFileId = "cloud-landed", status = SyncStatus.SYNCED), userId)
+        // The add read the row mid-upload, and the upload landed before the add wrote anything.
+        val readMidUpload = object : SyncStateRepository by syncRepo {
+            private var first = true
+            override suspend fun getByUri(localUri: String): SyncState? {
+                val current = syncRepo.getByUri(localUri)
+                if (!first) return current
+                first = false
+                return current?.copy(cloudFileId = null, status = SyncStatus.UPLOADING)
+            }
+        }
+        ForceUploadLocalUrisUseCase(context, readMidUpload, cloud, targetDao)
+            .queueForAlbum(userId, albumLinkId, listOf(uri))
+
+        row(uri)!!.let {
+            assertEquals(SyncStatus.SYNCED, it.status)
+            assertEquals("a backed-up row carries no intent", false, it.queued)
+            assertNull(it.queueSource)
+        }
+        uploadUseCase(userId)
+        assertEquals(listOf("cloud-landed"), cloud.albumMembers(albumLinkId))
+        assertTrue(targetDao.getTargetsFor(uri).isEmpty())
+        assertTrue(cloud.callLog.none { it == "UPLOAD" })
+    }
+
+    // ── Scenario 5e: album-add to an album that no longer exists ───────────────────
+
+    @Test
+    fun `a queued album-add whose album is gone is dropped instead of retried on every pass`() = runTest {
+        val uri = "content://media/a8"
+        val albumLinkId = "album-deleted"
+        local.add(localItem(uri))
+        forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+        // The album is deleted on Drive before the photo finishes uploading.
+        cloud.goneAlbums += albumLinkId
+
+        uploadUseCase(userId)
+
+        // The photo still backs up; only the add to the missing album is let go.
+        assertEquals(SyncStatus.SYNCED, row(uri)!!.status)
+        assertTrue("a gone album's pair must be dropped", targetDao.getTargetsFor(uri).isEmpty())
+        verify(exactly = 0) { albumEvents.notifyChanged() }
+
+        // Nothing is left to retry, so a later pass never sends the add again.
+        uploadUseCase(userId)
+        assertEquals(1, cloud.callLog.count { it == "ADD:$albumLinkId" })
+    }
+
+    // ── Scenario 5f: album-add to an album shared with this user ───────────────────
+
+    private fun sharedAlbum(linkId: String) = Album(
+        linkId = linkId, name = "Shared", photoCount = 0, coverLinkId = null, lastActivityTimeMs = null,
+    )
+
+    private suspend fun sharedAlbumMisses(): Set<String> =
+        context.settingsDataStore.data.first()[SettingsKeys.FOREIGN_ALBUM_JOIN_MISSES] ?: emptySet()
+
+    @Test
+    fun `a queued add to a shared album settles once its copy lands, after earlier misses`() = runTest {
+        val uri = "content://media/a10"
+        val albumLinkId = "album-shared"
+        local.add(localItem(uri))
+        cloud.sharedAddableAlbums += sharedAlbum(albumLinkId)
+        cloud.refusingAlbums += albumLinkId
+        forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+
+        // Two passes miss: the pair stays, and each miss is counted.
+        uploadUseCase(userId)
+        uploadUseCase(userId)
+        assertEquals(listOf(albumLinkId), targetDao.getTargetsFor(uri))
+        assertEquals(1, sharedAlbumMisses().size)
+        assertTrue(sharedAlbumMisses().single().startsWith("2|"))
+
+        // The album takes the copy on the next pass: the pair and its count are gone.
+        cloud.refusingAlbums -= albumLinkId
+        uploadUseCase(userId)
+        assertTrue(targetDao.getTargetsFor(uri).isEmpty())
+        assertTrue(sharedAlbumMisses().isEmpty())
+        verify(exactly = 1) { albumEvents.notifyChanged() }
+    }
+
+    @Test
+    fun `a queued add a shared album keeps refusing is dropped after the bounded passes`() = runTest {
+        val uri = "content://media/a11"
+        val albumLinkId = "album-shared-refusing"
+        local.add(localItem(uri))
+        cloud.sharedAddableAlbums += sharedAlbum(albumLinkId)
+        cloud.refusingAlbums += albumLinkId
+        forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+
+        repeat(FOREIGN_ALBUM_JOIN_ATTEMPTS - 1) { uploadUseCase(userId) }
+        assertEquals("the pair is retried until the bound", listOf(albumLinkId), targetDao.getTargetsFor(uri))
+
+        uploadUseCase(userId)
+        assertEquals(SyncStatus.SYNCED, row(uri)!!.status)
+        assertTrue("the pair is let go at the bound", targetDao.getTargetsFor(uri).isEmpty())
+        assertTrue(sharedAlbumMisses().isEmpty())
+        verify(exactly = 0) { albumEvents.notifyChanged() }
+
+        // Nothing is left to retry, so a later pass never sends the add again.
+        uploadUseCase(userId)
+        assertEquals(FOREIGN_ALBUM_JOIN_ATTEMPTS, cloud.callLog.count { it == "ADD:$albumLinkId" })
+    }
+
+    @Test
+    fun `an owned album that refuses keeps its pair past the shared-album bound`() = runTest {
+        val uri = "content://media/a12"
+        val albumLinkId = "album-owned-refusing"
+        local.add(localItem(uri))
+        cloud.refusingAlbums += albumLinkId
+        forceUploadUseCase.queueForAlbum(userId, albumLinkId, listOf(uri))
+
+        repeat(FOREIGN_ALBUM_JOIN_ATTEMPTS + 1) { uploadUseCase(userId) }
+
+        assertEquals(listOf(albumLinkId), targetDao.getTargetsFor(uri))
+        assertTrue(sharedAlbumMisses().isEmpty())
+    }
+
+    @Test
+    fun `a pair another signed-in account queued stays queued when its album is missing from this account`() = runTest {
+        val uri = "content://media/a9"
+        val albumLinkId = "album-other-account"
+        local.add(localItem(uri))
+        // Another signed-in account backed this photo up and queued it for one of its own albums.
+        syncRepo.upsert(
+            localOnlyRow(uri).copy(cloudFileId = "cloud-other", status = SyncStatus.SYNCED),
+            UserId("other-user"),
+        )
+        targetDao.insertIgnore(uri, albumLinkId)
+        // Asked for from this account, that album is not there.
+        cloud.goneAlbums += albumLinkId
+
+        uploadUseCase(userId)
+
+        assertEquals(listOf(albumLinkId), targetDao.getTargetsFor(uri))
     }
 
     // ── Scenario 6: out-of-scope de-queue vs explicit ───────────────────────────────
@@ -462,9 +734,12 @@ class UploadPipelineIntegrationTest {
     fun `reconcile drops a queued MANUAL row whose file was deleted and never re-queues it`() = runTest {
         seedBulkUploadGates(folder = "Camera")
         val gone = "content://media/gone-manual"
+        // Another photo stays on the device: a scan that finds nothing proves no file gone.
+        local.add(localItem("content://media/stays", bucket = "Camera"))
         local.add(localItem(gone, bucket = "Camera"))
         syncRepo.upsert(localOnlyRow(gone), userId)
-        syncRepo.markQueued(gone, QueueSource.MANUAL, System.currentTimeMillis())
+        // Queued before the pass begins; a row queued after its scan began is left for the next pass.
+        syncRepo.markQueued(gone, QueueSource.MANUAL, System.currentTimeMillis() - 60_000L)
         // The user deletes the file from the device.
         local.remove(gone)
 
@@ -517,6 +792,12 @@ private class FakeLocalMediaRepository : LocalMediaRepository {
     }
 
     override fun observeLocalMedia(): Flow<List<LocalMediaItem>> = items.asStateFlow()
+
+    /** Every file the fake holds, as a scan that saw the whole device, which the repository reports
+     *  only for a scan that found something. */
+    override suspend fun freshScan(): DeviceMediaScan =
+        items.value.let { DeviceMediaScan(it, complete = it.isNotEmpty()) }
+
     override suspend fun queryByUri(uri: String): LocalMediaItem? = items.value.firstOrNull { it.uri == uri }
     override suspend fun queryByBucket(bucketName: String): List<LocalMediaItem> =
         items.value.filter { it.bucketName == bucketName }
@@ -524,5 +805,7 @@ private class FakeLocalMediaRepository : LocalMediaRepository {
 
     override fun observeTrashedMedia(): Flow<List<LocalMediaItem>> = MutableStateFlow(emptyList())
     override fun hasMediaPermission(): Flow<Boolean> = MutableStateFlow(true)
+    override suspend fun confirmedGone(uris: Collection<String>): Set<String> =
+        uris.filterTo(HashSet()) { uri -> items.value.none { it.uri == uri } }
     override fun notifyMediaChanged() {}
 }

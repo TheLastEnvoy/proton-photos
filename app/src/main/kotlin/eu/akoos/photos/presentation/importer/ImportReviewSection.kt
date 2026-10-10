@@ -86,6 +86,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -93,6 +95,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import eu.akoos.photos.domain.importer.ImportFailureKind
 import eu.akoos.photos.R
 import eu.akoos.photos.data.db.dao.ImportAlbumCount
 import eu.akoos.photos.data.db.entity.ImportStagedEntity
@@ -108,7 +111,9 @@ import eu.akoos.photos.presentation.common.PrimaryButton
 import eu.akoos.photos.presentation.common.SelectionAction
 import eu.akoos.photos.presentation.common.SelectionDrawer
 import eu.akoos.photos.presentation.common.floatingHeaderContentTopPadding
+import eu.akoos.photos.presentation.common.selectionDrawerRestingHeight
 import eu.akoos.photos.presentation.gallery.PhotoCell
+import eu.akoos.photos.presentation.gallery.gridBottomPadding
 import eu.akoos.photos.presentation.gallery.rememberDragMultiSelectModifier
 import eu.akoos.photos.presentation.theme.AppColors
 import eu.akoos.photos.presentation.viewer.MetaRow
@@ -231,6 +236,10 @@ fun ImportReviewSection(
     ) {
         val contentTopPad = floatingHeaderContentTopPadding()
         val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val density = LocalDensity.current
+        // The confirm bar as drawn, navigation inset included; the album row makes it taller. Seeded with
+        // an estimate so the frame before the bar first measures already insets the grid.
+        var confirmBarHeight by remember { mutableStateOf(150.dp + navBottom) }
 
         LazyVerticalGrid(
             state = gridState,
@@ -242,8 +251,14 @@ fun ImportReviewSection(
                 start = 12.dp,
                 top = contentTopPad,
                 end = 12.dp,
-                // Clear the bottom bar (confirm button + discard row) so the last thumbnails stay reachable.
-                bottom = 150.dp + navBottom,
+                // Clear the bottom bar by its measured height and one grid gap, so the last thumbnails stay
+                // reachable with or without the album row. The selection drawer that replaces it slots no
+                // action, so it rests without the button row.
+                bottom = gridBottomPadding(
+                    base = confirmBarHeight + 8.dp,
+                    selecting = selectionMode,
+                    drawerHeight = selectionDrawerRestingHeight(withPrimaryRow = false),
+                ),
             ),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -258,6 +273,25 @@ fun ImportReviewSection(
                     albumSummary = albumSummary,
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
+            }
+            // The read stopped before the end of the archive, so what follows is only part of it.
+            state.incomplete?.let { kind ->
+                item(span = { GridItemSpan(maxLineSpan) }, key = "incomplete") {
+                    val reason = stringResource(
+                        when (kind) {
+                            ImportFailureKind.STORAGE_FULL -> R.string.import_reason_storage
+                            ImportFailureKind.SOURCE_UNREADABLE -> R.string.import_reason_source
+                            ImportFailureKind.ARCHIVE_DAMAGED -> R.string.import_reason_archive
+                            ImportFailureKind.OTHER -> R.string.import_reason_other
+                        },
+                    )
+                    Text(
+                        text = stringResource(R.string.import_review_partial, reason),
+                        color = colors.fgDim,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                }
             }
             items(rows, key = { it.entryName }) { row ->
                 ImportReviewCell(
@@ -301,6 +335,7 @@ fun ImportReviewSection(
                 onOpenAlbumSheet = { showAlbumSheet = true },
                 onConfirm = { showImportConfirm = true },
                 onDiscard = { showDiscardConfirm = true },
+                modifier = Modifier.onSizeChanged { confirmBarHeight = with(density) { it.height.toDp() } },
             )
         }
 
@@ -373,6 +408,9 @@ fun ImportReviewSection(
             items = selectedItems,
             actions = selectionActions,
             onDismiss = { clearSelection() },
+            // Scrolling the review grid collapses an opened drawer, so reaching past it to carry on
+            // through the photos needs no deliberate pull or tap first.
+            contentScrolling = gridState.isScrollInProgress,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
 

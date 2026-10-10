@@ -117,12 +117,14 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import eu.akoos.photos.R
 import eu.akoos.photos.presentation.common.ConfirmDialog
-import eu.akoos.photos.presentation.common.EditFieldSheet
 import eu.akoos.photos.presentation.common.anyMetadataEditable
+import eu.akoos.photos.presentation.common.rememberAddLabelsAction
 import eu.akoos.photos.presentation.gallery.MetadataStripPickerDialog
 import eu.akoos.photos.presentation.gallery.MoveToFolderHost
 import eu.akoos.photos.presentation.common.SecureScreenEffect
 import eu.akoos.photos.presentation.common.UndoAction
+import eu.akoos.photos.presentation.lock.LocalAppLock
+import eu.akoos.photos.presentation.lock.runWhenOpen
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -166,6 +168,8 @@ import eu.akoos.photos.domain.usecase.DeletePhotoUseCase
 import eu.akoos.photos.presentation.common.LocalVideoThumb
 import eu.akoos.photos.presentation.common.rememberLocalVideoThumbnail
 import eu.akoos.photos.presentation.gallery.LocalThumbnailUrls
+import eu.akoos.photos.presentation.people.NameOrMergeSheet
+import eu.akoos.photos.presentation.people.NameOrMergeSubject
 import eu.akoos.photos.presentation.theme.Accent
 import eu.akoos.photos.presentation.theme.Bg0
 import eu.akoos.photos.presentation.theme.CloudBadgeSurface
@@ -177,7 +181,9 @@ import eu.akoos.photos.presentation.theme.FgMute
 import eu.akoos.photos.presentation.theme.FgPrimary
 import eu.akoos.photos.presentation.theme.PillBg
 import eu.akoos.photos.presentation.theme.PillBorder
+import eu.akoos.photos.presentation.util.appLocale
 import eu.akoos.photos.presentation.util.findActivity
+import eu.akoos.photos.util.cityCountryLabel
 import eu.akoos.photos.util.copySensitiveText
 
 internal val bubbleShape = CircleShape
@@ -260,6 +266,28 @@ internal fun applyVaultMoves(
     return if (moved == items) items else moved
 }
 
+/**
+ * What the naming sheet asks about when [person]'s face tag or People pill is tapped, or null for a
+ * named person, whose page opens instead.
+ *
+ * A single Unsorted face is named on its own, never as the whole bucket. An unnamed group is asked about
+ * as the group, headed by its face as it appears on this photo. [faceSource] is the model the viewer draws
+ * the photo from, the one the face is cropped out of.
+ */
+internal fun nameOrMergeSubjectFor(
+    person: PhotoViewerViewModel.ViewerPerson,
+    faceSource: Any?,
+): NameOrMergeSubject? = when {
+    person.isOther -> NameOrMergeSubject.Face(person.faceId, faceSource, person.faceBox)
+    person.name.isNullOrBlank() -> NameOrMergeSubject.Group(
+        personId = person.personId,
+        photoCount = person.photoCount,
+        coverSource = faceSource,
+        faceBox = person.faceBox,
+    )
+    else -> null
+}
+
 /** One press's outcome for the viewer's hand-rolled tap detector: a lift (a tap), a hold past the
  *  long-press time, or a cancel (a move past touch slop, or a second finger for a pinch). */
 private sealed interface ViewerTapOutcome {
@@ -337,8 +365,12 @@ fun PhotoViewerScreen(
     /** Opens the date + place metadata editor for the current item. Suppressed for a shared-with-me
      *  album (the sheet hides the affordance), mirroring the rename gate. */
     onEditMetadata: (GalleryItem) -> Unit = {},
+    /** Opens the Labels settings page, from the title of the details panel's Labels section. */
+    onOpenLabelsSettings: () -> Unit = {},
     /** Opens the page of the person the face index grouped, from the "people in this photo" bar. */
     onOpenPerson: (Long) -> Unit = {},
+    /** Opens the full map centred on the photo's place, from the map box in the details panel. */
+    onOpenMapAt: (latitude: Double, longitude: Double) -> Unit = { _, _ -> },
     /** True when the viewer was opened from the Trash screen: adds a Restore / Delete-forever bar to
      *  the bottom chrome. The mutating chrome is already suppressed through [isReadOnlyAlbum]. */
     trashMode: Boolean = false,
@@ -438,9 +470,12 @@ fun PhotoViewerScreen(
     // The people the face index found on the settled photo, and whether their name tags are pinned over
     // the faces. Reset on every page settle so tags never carry a previous photo's faces.
     val peopleInPhoto by viewModel.peopleInPhoto.collectAsStateWithLifecycle()
+    // The photo that list was read for, so the details panel shows only the settled photo's people.
+    val peopleInPhotoKey by viewModel.peopleInPhotoKey.collectAsStateWithLifecycle()
     var facesMode by remember { mutableStateOf(false) }
-    // The single Unsorted face the user tapped in the tags overlay to name, or null when no sheet is open.
-    var faceToName by remember { mutableStateOf<String?>(null) }
+    // The nameless face or group a face tag or a People pill was tapped for, or null while the naming
+    // sheet is closed.
+    var nameOrMergeSubject by remember { mutableStateOf<NameOrMergeSubject?>(null) }
     // The settled photo's decoded pixel size, shared by the tags and the long-press face hit-test.
     var settledImageSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     // Once any settled photo decodes to HDR, hold the window in HDR colour mode for the rest of the
@@ -514,6 +549,12 @@ fun PhotoViewerScreen(
     LaunchedEffect(Unit) { viewModel.loadAlbums() }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    // The same Add labels sheet the selection drawer opens, held here so it outlives the menu and the
+    // details panel that open it, and adds to the photo on screen, its current labels counting to the cap.
+    LaunchedEffect(gatedItem) { gatedItem?.let { viewModel.loadLabels(it) } }
+    val addLabelsAction = rememberAddLabelsAction(listOfNotNull(gatedItem)) { message ->
+        scope.launch { snackbarHostState.showSnackbar(message) }
+    }
 
     val transientError by viewModel.transientError.collectAsStateWithLifecycle()
     LaunchedEffect(transientError) {
@@ -527,6 +568,7 @@ fun PhotoViewerScreen(
     val coverUpdatedMessage = stringResource(R.string.album_cover_updated)
     val shareChooserTitle = stringResource(R.string.share_chooser_title)
     val shareContext = LocalContext.current
+    val appLock = LocalAppLock.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(Unit) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
@@ -546,9 +588,13 @@ fun PhotoViewerScreen(
                 }
             }
             // In the STARTED block so a backgrounded viewer doesn't pop the chooser over another screen.
+            // A share that lands under the app lock waits for the unlock, as the chooser would open
+            // above the lock.
             launch {
                 viewModel.shareIntent.collect { intent ->
-                    shareContext.startActivity(Intent.createChooser(intent, shareChooserTitle))
+                    appLock.runWhenOpen {
+                        shareContext.startActivity(Intent.createChooser(intent, shareChooserTitle))
+                    }
                 }
             }
         }
@@ -968,6 +1014,17 @@ fun PhotoViewerScreen(
         }
     }
 
+    // A playing video takes the chrome down on its own a moment after it starts, as a tap would.
+    val viewerTouches = rememberViewerTouches()
+    VideoChromeAutoHide(
+        chromeVisible = showChrome,
+        videoPlaying = isVideoPlaying,
+        slideshowRunning = isPlaying,
+        settledPage = pagerState.settledPage,
+        touches = viewerTouches,
+        onHide = { showOverlays = false },
+    )
+
     // Tick: every 4 seconds, advance to the next page. Loops back to 0 from the end.
     // For VIDEOS we hold the advance until either the clip ends (player flips out of
     // playing state on its own) or the player hasn't started playing within the first
@@ -1186,6 +1243,8 @@ fun PhotoViewerScreen(
             .fillMaxSize()
             .background(Bg0)
             .onSizeChanged { containerSize = it }
+            // Sees every press and lift first and consumes none, for the video chrome's auto-hide.
+            .observeTouches(viewerTouches)
             .pointerInput("viewer-taps") {
                 // Hand-rolled tap, double tap and long press. The down is read even if a lower node
                 // consumed it (so the first press on a freshly landed page is not lost), and a tap
@@ -1633,8 +1692,8 @@ fun PhotoViewerScreen(
                     // Face name tags over the settled photo or video when the menu has them on, placed
                     // through the same fit and zoom the media rides so each tag stays on its face while
                     // panning and pinching. A video uses its decoded frame size once the player reports
-                    // it, a still its decoded size; the still's size stands in until then. A tap opens
-                    // the person, or names a lone Unsorted face on the spot. Drawn under the hidden-blur
+                    // it, a still its decoded size; the still's size stands in until then. A tap opens a
+                    // named person, or the sheet that names a nameless face. Drawn under the hidden-blur
                     // below so a hidden item never shows tags on top.
                     val faceOverlaySize = if (
                         state is PhotoViewerViewModel.ViewerState.ShowVideo &&
@@ -1650,12 +1709,13 @@ fun PhotoViewerScreen(
                             offset = offset,
                             people = peopleInPhoto,
                             onFaceClick = { person ->
-                                // A leftover (Unsorted) face has no person to open, so name this one
-                                // face into a real person right here, and KEEP the overlay up so the next
-                                // face in a group photo can be tagged without reopening it. Opening a real
-                                // person navigates away, so there the overlay is dropped.
-                                if (person.isOther) {
-                                    faceToName = person.faceId
+                                // A nameless face opens the naming sheet, cropped from this page's model as
+                                // the People box crops it, and the overlay STAYS up so the next face in a
+                                // group photo can be tagged without reopening it. A named person's page
+                                // navigates away, so there the overlay is dropped.
+                                val subject = nameOrMergeSubjectFor(person, thumbModel)
+                                if (subject != null) {
+                                    nameOrMergeSubject = subject
                                 } else {
                                     facesMode = false
                                     onOpenPerson(person.personId)
@@ -2002,6 +2062,28 @@ fun PhotoViewerScreen(
                                     showMetadata = true
                                 },
                             )
+                            // Add labels opens the selection drawer's sheet for the photo on screen.
+                            // Offered where the details sheet shows the labels box: not on a vaulted,
+                            // hidden or shared photo.
+                            val menuLinkId = when (val s = settledItem) {
+                                is GalleryItem.CloudOnly -> s.cloud.linkId
+                                is GalleryItem.Synced -> s.cloud.linkId
+                                else -> null
+                            }
+                            if (addLabelsAction != null && !trashMode && !isReadOnlyAlbum && !secure &&
+                                !isVaultedItem && !isHidden &&
+                                (menuLinkId == null || menuLinkId !in hiddenCloudLinkIds)
+                            ) {
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(addLabelsAction.label, color = FgPrimary) },
+                                    leadingIcon = { Icon(addLabelsAction.icon, null,
+                                        tint = Accent, modifier = Modifier.size(20.dp)) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        addLabelsAction.onClick()
+                                    },
+                                )
+                            }
                             // Edit the capture date and place. Offered when the item is editable (a
                             // device photo, a cloud or backed-up image the corrected-copy replace can
                             // rewrite, or a cloud / synced video whose capture date it can change) outside
@@ -2581,6 +2663,30 @@ fun PhotoViewerScreen(
                 viewModel.loadDetailsAlbums(item)
             }
         }
+        // A face crop or a pin on the map gives away what a vaulted or hidden photo shows, and the
+        // viewer blurs a photo hidden on this device, so neither box is drawn for one.
+        val detailsLinkId = when (item) {
+            is GalleryItem.CloudOnly -> item.cloud.linkId
+            is GalleryItem.Synced -> item.cloud.linkId
+            else -> null
+        }
+        val detailsPrivate = secure || isVaultedItem || isHidden ||
+            (detailsLinkId != null && detailsLinkId in hiddenCloudLinkIds)
+        val showPeopleBox = !trashMode && !detailsPrivate && aiFeaturesEnabled && faceEnabled &&
+            peopleBelongTo(peopleInPhotoKey, item)
+        // The model the pager draws this photo from, so each face is cropped out of the image on screen.
+        val detailsThumbUrls = LocalThumbnailUrls.current.value
+        val faceSource: Any? = when (item) {
+            is GalleryItem.LocalOnly -> Uri.parse(item.local.uri)
+            is GalleryItem.Synced -> Uri.parse(item.local.uri)
+            is GalleryItem.CloudOnly -> detailsThumbUrls[item.cloud.linkId] ?: item.cloud.thumbnailUrl
+            null -> null
+        }
+        // "City, Country" for the Place row and the map caption, the country named in the app language.
+        val locale = appLocale()
+        val placeLabel = remember(detailsPlace, locale) {
+            detailsPlace?.let { cityCountryLabel(it.city, it.countryCode, it.countryName, locale) }
+        }
         ModalBottomSheet(
             onDismissRequest = { showMetadata = false },
             sheetState = metadataSheetState,
@@ -2590,7 +2696,7 @@ fun PhotoViewerScreen(
             PhotoMetadataSheet(
                 item = item,
                 exif = metadata,
-                place = detailsPlace,
+                place = placeLabel,
                 resolvedGps = detailsGps,
                 localFolder = detailsAlbums.localFolder,
                 cloudAlbums = detailsAlbums.cloudAlbums,
@@ -2624,6 +2730,42 @@ fun PhotoViewerScreen(
                     !anyMetadataEditable(listOf(item))
                 ) null else {
                     { showMetadata = false; onEditMetadata(item) }
+                },
+                // Labels are the user's own: none on a vaulted or hidden photo, nor on someone else's.
+                // The details sheet closes first, so neither the Add labels sheet nor the settings
+                // page opens over it.
+                labelsBox = {
+                    if (item != null && !detailsPrivate && !isReadOnlyAlbum) DetailsLabels(
+                        viewModel, item,
+                        onAddLabels = addLabelsAction?.let { add -> { showMetadata = false; add.onClick() } },
+                        onOpenSettings = { showMetadata = false; onOpenLabelsSettings() },
+                    )
+                },
+                peopleBox = {
+                    if (showPeopleBox) {
+                        DetailsPeopleBox(
+                            people = peopleInPhoto,
+                            faceSource = faceSource,
+                            onPersonClick = { person ->
+                                // The details sheet goes first, so the naming sheet never opens over it.
+                                showMetadata = false
+                                val subject = nameOrMergeSubjectFor(person, faceSource)
+                                if (subject != null) {
+                                    nameOrMergeSubject = subject
+                                } else {
+                                    onOpenPerson(person.personId)
+                                }
+                            },
+                        )
+                    }
+                },
+                showMapBox = !detailsPrivate,
+                // Inert in trash, where the photo is on its way out rather than something to explore.
+                onOpenMap = if (trashMode) null else {
+                    { latitude: Double, longitude: Double ->
+                        showMetadata = false
+                        onOpenMapAt(latitude, longitude)
+                    }
                 },
             )
         }
@@ -2694,15 +2836,20 @@ fun PhotoViewerScreen(
                 showAddToAlbumSheet = false
             },
             onCloudAlbumPicked = { albumLinkId ->
-                if (settledItem != null) {
-                    // Tap-to-remove when the photo is already in this album, otherwise add.
-                    if (albumLinkId in currentPhotoAlbumIds) {
-                        viewModel.removeFromAlbum(albumLinkId, settledItem)
-                    } else {
-                        viewModel.addToAlbum(albumLinkId, settledItem)
+                // A backed-up photo's membership is read back after each tap, so the sheet stays open
+                // for the next album. A photo still queued to upload has nothing to read back, so
+                // its sheet closes as before.
+                if (!isAddingToAlbum) {
+                    if (settledItem != null) {
+                        // Tap-to-remove when the photo is already in this album, otherwise add.
+                        if (albumLinkId in currentPhotoAlbumIds) {
+                            viewModel.removeFromAlbum(albumLinkId, settledItem)
+                        } else {
+                            viewModel.addToAlbum(albumLinkId, settledItem)
+                        }
                     }
+                    if (!hasCloud) showAddToAlbumSheet = false
                 }
-                showAddToAlbumSheet = false
             },
         )
     }
@@ -2849,23 +2996,18 @@ fun PhotoViewerScreen(
         }
     }
 
-    // ── Name a single Unsorted face tapped in the tags overlay ─────────────────
-    // A leftover face has no person page to open, so naming happens here: type a name and this one face
-    // becomes (or joins) that person, lifting it out of the Unsorted pile.
-    if (faceToName != null) {
-        val settledItem = items.getOrNull(pagerState.settledPage)
-        val fid = faceToName
-        EditFieldSheet(
-            title = stringResource(R.string.person_add_name),
-            hint = stringResource(R.string.person_rename_hint),
-            initialValue = "",
-            singleLine = true,
-            confirmLabel = stringResource(R.string.person_add_name),
-            onDismiss = { faceToName = null },
-            onSave = { name ->
-                if (fid != null && settledItem != null) viewModel.nameFace(settledItem, fid, name)
+    // ── Name a nameless face tapped in the tags overlay or the People box ──────
+    // A single Unsorted face goes to a picked or typed person; an unnamed group takes a name or joins
+    // someone. Once done, the settled photo's people are read again so its tags and pills show the name.
+    nameOrMergeSubject?.let { subject ->
+        NameOrMergeSheet(
+            subject = subject,
+            onDismiss = { nameOrMergeSubject = null },
+            onOpenGroup = { personId ->
+                facesMode = false
+                onOpenPerson(personId)
             },
-            canConfirm = { it.isNotBlank() },
+            onDone = { _ -> items.getOrNull(pagerState.settledPage)?.let { viewModel.loadPeopleInPhoto(it) } },
         )
     }
 }

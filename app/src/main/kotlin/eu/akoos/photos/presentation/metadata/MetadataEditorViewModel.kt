@@ -68,7 +68,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.proton.core.accountmanager.domain.AccountManager
-import java.util.Locale
 import javax.inject.Inject
 
 /** Which source the shown capture date is read from, so the screen can label it. The display basis
@@ -113,9 +112,10 @@ data class MetadataEditorUiState(
     val dateSource: DateSource = DateSource.DEVICE,
     /** Null when the date is editable; otherwise why the picker is locked. */
     val dateLock: EditLock? = null,
-    /** Resolved "City, Country" for the current coordinates, or null while it resolves / when there
-     *  are none (the screen then shows its "No location" placeholder). */
-    val placeLabel: String? = null,
+    /** The place the current coordinates resolve to, or null while it resolves / when there are none
+     *  (the screen then shows its "No location" placeholder). A country-only pick leaves the city blank.
+     *  The country stays an ISO code here, so the screen names it in the app language. */
+    val place: OfflineGeocoder.GeoLabel? = null,
     val hasLocation: Boolean = false,
     val latitude: Double? = null,
     val longitude: Double? = null,
@@ -332,7 +332,7 @@ class MetadataEditorViewModel @Inject constructor(
          *  write time from [filenameDateByUri]. */
         data object FilenameDate : PendingAction
 
-        data class Location(val lat: Double, val lon: Double, val label: String) : PendingAction
+        data class Location(val lat: Double, val lon: Double, val place: OfflineGeocoder.GeoLabel) : PendingAction
         data object ClearLocation : PendingAction
         data class Text(val tag: MetadataTextTag, val value: String) : PendingAction
     }
@@ -411,20 +411,13 @@ class MetadataEditorViewModel @Inject constructor(
         val singleMode = items.size == 1 && editableCount == 1
         val bulk = editableCount >= 1 && !singleMode
 
-        // A date write lands only where it durably holds: an editable image whose EXIF takes the stamp
-        // or any video (its mvhd or the column), so an EXIF-unwritable image is held back, since only its
-        // column would move and the next scan reverts it. A vaulted photo is covered whatever it is: the
-        // vault keeps its date in the file name and reads it from there, so the container it happens to
-        // be in decides nothing. A place write needs a GPS EXIF block ExifInterface can save, which is
+        // Every device photo takes a date write. Where the container holds the stamp (an EXIF image, an mvhd
+        // video) the file carries it, and where it cannot (HEIC, GIF, RAW) the write also records a
+        // capture-date override, which outranks the column a media scan re-derives. A vaulted photo keeps
+        // its date in the file name, so the container it happens to be in decides nothing. A place write needs a GPS EXIF block ExifInterface can save, which is
         // the same JPEG / PNG / WebP set the text tags need, so a video (no GPS block) and an unwritable
         // image (HEIC, GIF, RAW) both stay out of the location targets.
-        dateTargetUris = editable
-            .filter {
-                hiddenStorage.isHiddenUri(it.local.uri) ||
-                    WriteLocalPhotoMetadataUseCase.isExifWritableImageMime(it.local.mimeType) ||
-                    WriteLocalPhotoMetadataUseCase.isVideoMime(it.local.mimeType)
-            }
-            .map { it.local.uri } + (syncedImages + syncedVideos).map { it.local.uri }
+        dateTargetUris = editable.map { it.local.uri } + (syncedImages + syncedVideos).map { it.local.uri }
         placeTargetUris = (editable
             .filter { WriteLocalPhotoMetadataUseCase.isExifWritableImageMime(it.local.mimeType) }
             .map { it.local.uri }) + syncedImages.map { it.local.uri }
@@ -543,13 +536,13 @@ class MetadataEditorViewModel @Inject constructor(
                     _state.update { it.copy(hasLocation = false) }
                     return@launch
                 }
-                val label = OfflineGeocoder.reverseGeocode(context, coords.first, coords.second)
+                val place = OfflineGeocoder.reverseGeocodeDetailed(context, coords.first, coords.second)
                 _state.update {
                     it.copy(
                         hasLocation = true,
                         latitude = coords.first,
                         longitude = coords.second,
-                        placeLabel = label,
+                        place = place,
                     )
                 }
             }
@@ -639,35 +632,24 @@ class MetadataEditorViewModel @Inject constructor(
         _state.update { it.copy(dateChosen = true) }
     }
 
-    /** Places every editable image at [code]'s country centroid, labelling it with the country name. */
-    fun pickCountry(code: String) {
+    /** Places every editable image at [latitude]/[longitude], labelling it with the nearest city. */
+    fun pickPoint(latitude: Double, longitude: Double) {
         if (_state.value.placeLock != null) return
         viewModelScope.launch {
-            val point = OfflineGeocoder.countryPoint(context, code) ?: run {
-                _events.send(MetadataEditorEvent.Failed)
-                return@launch
-            }
-            val label = Locale("", code).getDisplayCountry(Locale.getDefault()).ifBlank { code }
-            performBatch(PendingAction.Location(point.first, point.second, label), placeTargetUris)
+            val nearest = OfflineGeocoder.reverseGeocodeDetailed(context, latitude, longitude)
+            val picked = OfflineGeocoder.GeoLabel(
+                city = nearest?.city.orEmpty(),
+                countryCode = nearest?.countryCode.orEmpty(),
+                countryName = "",
+            )
+            performBatch(PendingAction.Location(latitude, longitude, picked), placeTargetUris)
             val cloudTargets = cloudImageTargets + syncedImageTargets
             if (cloudTargets.isEmpty()) return@launch
-            stageCloudLocation(cloudTargets, LocationEdit.Set(point.first, point.second))
-            _state.update { it.copy(hasLocation = true, placeLabel = label, placeChosen = true) }
+            stageCloudLocation(cloudTargets, LocationEdit.Set(latitude, longitude))
+            _state.update {
+                it.copy(hasLocation = true, latitude = latitude, longitude = longitude, place = picked, placeChosen = true)
+            }
         }
-    }
-
-    /** Places every editable image at [place]'s coordinates, labelling it "City, Country". */
-    fun pickCity(place: OfflineGeocoder.GeoPlace) {
-        if (_state.value.placeLock != null) return
-        val country = Locale("", place.countryCode)
-            .getDisplayCountry(Locale.getDefault())
-            .ifBlank { place.countryCode }
-        val label = "${place.name}, $country"
-        performBatch(PendingAction.Location(place.latitude, place.longitude, label), placeTargetUris)
-        val cloudTargets = cloudImageTargets + syncedImageTargets
-        if (cloudTargets.isEmpty()) return
-        stageCloudLocation(cloudTargets, LocationEdit.Set(place.latitude, place.longitude))
-        _state.update { it.copy(hasLocation = true, placeLabel = label, placeChosen = true) }
     }
 
     /** Strips the GPS location from every editable image. */
@@ -677,7 +659,7 @@ class MetadataEditorViewModel @Inject constructor(
         val cloudTargets = cloudImageTargets + syncedImageTargets
         if (cloudTargets.isEmpty()) return
         stageCloudLocation(cloudTargets, LocationEdit.Clear)
-        _state.update { it.copy(hasLocation = false, placeLabel = null, placeChosen = true) }
+        _state.update { it.copy(hasLocation = false, place = null, placeChosen = true) }
     }
 
     /** Records typing in [tag]'s box. The value is capped at the length one EXIF text tag holds, so what
@@ -994,14 +976,14 @@ class MetadataEditorViewModel @Inject constructor(
                     hasLocation = true,
                     latitude = action.lat,
                     longitude = action.lon,
-                    placeLabel = action.label,
+                    place = action.place,
                     placeChosen = true,
                 )
                 PendingAction.ClearLocation -> it.copy(
                     hasLocation = false,
                     latitude = null,
                     longitude = null,
-                    placeLabel = null,
+                    place = null,
                     placeChosen = true,
                 )
                 // The box takes the ASCII form the file received, so what it shows after a save is
@@ -1027,12 +1009,19 @@ class MetadataEditorViewModel @Inject constructor(
      */
     private suspend fun retargetDateOverrides(captureMsByUri: Map<String, Long>) {
         if (captureMsByUri.isEmpty()) return
+        // A file whose container cannot hold the date keeps it only in the override, so it gets an entry
+        // even when it had none; the rest only move an entry they already have.
+        val columnOnlyUris = boundItems.filterIsInstance<GalleryItem.LocalOnly>()
+            .filter { WriteLocalPhotoMetadataUseCase.dateLivesOnlyInColumn(it.local.mimeType) }
+            .mapTo(HashSet()) { it.local.uri }
+        val columnOnly = captureMsByUri.filterKeys { it in columnOnlyUris && !hiddenStorage.isHiddenUri(it) }
+        val modifiedByUri = columnOnly.keys.associateWith { localMediaRepository.queryByUri(it)?.dateModified }
         runCatching {
             context.settingsDataStore.edit { prefs ->
-                val current = prefs[SettingsKeys.DOWNLOAD_DATE_OVERRIDES] ?: return@edit
-                CaptureDateOverride.retarget(current, captureMsByUri)?.let {
-                    prefs[SettingsKeys.DOWNLOAD_DATE_OVERRIDES] = it
-                }
+                val current = prefs[SettingsKeys.DOWNLOAD_DATE_OVERRIDES] ?: emptySet()
+                var next = CaptureDateOverride.retarget(current, captureMsByUri - columnOnly.keys) ?: current
+                next = CaptureDateOverride.upsert(next, columnOnly, modifiedByUri) ?: next
+                if (next != current) prefs[SettingsKeys.DOWNLOAD_DATE_OVERRIDES] = next
             }
         }
     }

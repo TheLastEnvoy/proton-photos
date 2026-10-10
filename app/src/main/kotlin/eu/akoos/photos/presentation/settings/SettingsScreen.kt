@@ -72,16 +72,17 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -136,10 +137,13 @@ import eu.akoos.photos.data.semantic.SemanticStatusLabel
 import eu.akoos.photos.data.semantic.semanticStatusLabel
 import eu.akoos.photos.domain.entity.compression.VideoCompressionProfile
 import eu.akoos.photos.presentation.gallery.PersonTile
+import eu.akoos.photos.presentation.people.NameOrMergeSheet
+import eu.akoos.photos.presentation.people.PersonTapTarget
+import eu.akoos.photos.presentation.people.personTapTarget
+import eu.akoos.photos.presentation.people.rememberGroupSubject
 import eu.akoos.photos.presentation.search.SearchFilter
 import eu.akoos.photos.presentation.common.ConfirmDialog
 import eu.akoos.photos.presentation.common.ConfirmSheet
-import eu.akoos.photos.util.ShareIntentBuilder
 import eu.akoos.photos.presentation.common.PrimaryButton
 import eu.akoos.photos.presentation.common.ErrorPopup
 import eu.akoos.photos.presentation.common.FloatingHeaderScrim
@@ -147,6 +151,7 @@ import eu.akoos.photos.presentation.common.IconBubble
 import eu.akoos.photos.presentation.common.floatingHeaderContentTopPadding
 import eu.akoos.photos.presentation.common.ShimmerBox
 import eu.akoos.photos.presentation.common.ShimmerTextLine
+import eu.akoos.photos.presentation.lock.showAppLockPrompt
 import eu.akoos.photos.util.HealthBlockReason
 import eu.akoos.photos.util.sanitizeErrorMessage
 import eu.akoos.photos.presentation.settings.compression.CodecPicker
@@ -211,23 +216,24 @@ fun SettingsScreen(
     onPrivacySecurityClick: () -> Unit = {},
     onPermissionsClick: () -> Unit = {},
     onNotificationsClick: () -> Unit = {},
+    onLabelsClick: () -> Unit = {},
     onRecentlyDeletedClick: () -> Unit = {},
     onFindDuplicatesClick: () -> Unit = {},
     onImportClick: () -> Unit = {},
     onAppearanceClick: () -> Unit = {},
     onLanguageClick: () -> Unit = {},
     onAboutClick: () -> Unit = {},
-    onFaqClick: () -> Unit = {},
     onAccountClick: () -> Unit = {},
     onSignIn: () -> Unit = {},
-    onCheckForUpdatesClick: () -> Unit = {},
-    onWhatsNewClick: () -> Unit = {},
     onNewsClick: () -> Unit = {},
+    onMoreSettingsClick: () -> Unit = {},
     /** DEBUG only: opens a screen by route from the compression preview card. */
     onDebugNavigate: (String) -> Unit = {},
     /** Opens a settings-search result by its NavGraph route (top-level pages and the query-string
      *  destinations the index points at); the inline search resets when this fires. */
     onOpenRoute: (String) -> Unit = {},
+    /** True for the second page, which holds the settings the first page leaves out. */
+    more: Boolean = false,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -336,9 +342,12 @@ fun SettingsScreen(
                     if (isNotEmpty()) append("\n\n")
                     append("Semantic:\n").append(eu.akoos.photos.util.SemanticDiagnostics.snapshot())
                 }
-                if (eu.akoos.photos.util.ImportDiagnostics.hasData()) {
+                // The step-by-step record lives in a file, so it is there after a process kill too.
+                val importLog = runCatching { eu.akoos.photos.util.ImportEventLog.text(context.filesDir) }.getOrDefault("")
+                if (eu.akoos.photos.util.ImportDiagnostics.hasData() || importLog.isNotBlank()) {
                     if (isNotEmpty()) append("\n\n")
                     append("Import:\n").append(eu.akoos.photos.util.ImportDiagnostics.snapshot())
+                    if (importLog.isNotBlank()) append("\nlog:\n").append(importLog)
                 }
                 if (crashLog.isNotBlank()) {
                     if (isNotEmpty()) append("\n\n")
@@ -438,6 +447,7 @@ fun SettingsScreen(
                     Spacer(Modifier.height(contentTopPad))
                     Spacer(Modifier.height(12.dp))
 
+            if (!more) {
             // ── Account ───────────────────────────────────────────────────────
             // The whole row is now a tap target, opens AccountScreen with avatar,
             // storage, web links, and sign out. Sign out moved out of the row to
@@ -663,12 +673,6 @@ fun SettingsScreen(
                 }
                 // The whole status card opens the live Activity view; this row names that target so
                 // the tap is obvious (transfers + photos still waiting to upload).
-                RowDivider()
-                NavRow(
-                    label = stringResource(R.string.activity_title),
-                    description = stringResource(R.string.activity_row_desc),
-                    onClick = onActivityClick,
-                )
                 // Explicit entry to the backup settings, clearer than only the tappable status row.
                 RowDivider()
                 NavRow(
@@ -712,12 +716,39 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            // ── AI / Machine learning ─────────────────────────────────────────
-            // Master opt-in for every on-device ML feature (Copy text, Hide faces,
-            // and the People grouping to come). A primary section, not buried in
-            // Extras, because it gates whether any model is ever fetched. The
-            // sub-page hosts the toggle now and the indexing status a later piece adds.
-            CollapsibleSection(label = stringResource(R.string.settings_ai_section)) {
+            // The way into the rest of the settings sits first, then Appearance and About.
+            SettingsCard {
+                NavRow(
+                    label = stringResource(R.string.settings_more_title),
+                    description = stringResource(R.string.settings_more_desc),
+                    onClick = onMoreSettingsClick,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            SettingsCard {
+                NavRow(
+                    label = stringResource(R.string.settings_appearance),
+                    description = stringResource(R.string.settings_appearance_desc),
+                    onClick = onAppearanceClick,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            SettingsCard {
+                NavRow(
+                    label = stringResource(R.string.news_title),
+                    onClick = onNewsClick,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            SettingsCard {
+                NavRow(
+                    label = stringResource(R.string.about_title),
+                    description = stringResource(R.string.settings_about_desc),
+                    onClick = onAboutClick,
+                )
+            }
+            } else {
+            // The second page: the on-device features, privacy, and help.
             SettingsCard {
                 NavRow(
                     label = stringResource(R.string.settings_ai_section),
@@ -725,12 +756,15 @@ fun SettingsScreen(
                     onClick = onAiClick,
                 )
             }
+            Spacer(Modifier.height(12.dp))
+            SettingsCard {
+                NavRow(
+                    label = stringResource(R.string.label_section_title),
+                    description = stringResource(R.string.label_settings_desc),
+                    onClick = onLabelsClick,
+                )
             }
-
-            Spacer(Modifier.height(20.dp))
-
-            // ── Privacy & Security ────────────────────────────────────────────
-            CollapsibleSection(label = stringResource(R.string.settings_privacy_security)) {
+            Spacer(Modifier.height(12.dp))
             SettingsCard {
                 NavRow(
                     label = stringResource(R.string.settings_privacy_security),
@@ -745,68 +779,11 @@ fun SettingsScreen(
                 RowDivider()
                 NavRow(
                     label = stringResource(R.string.notifications_title),
-                    description = stringResource(R.string.notifications_nav_desc),
                     onClick = onNotificationsClick,
                 )
             }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // ── Appearance ────────────────────────────────────────────────────
-            // Appearance + Language merged into one entry, the destination is the
-            // unified appearance screen which now hosts theme + palette + language
-            // in a single scroll.
-            CollapsibleSection(label = stringResource(R.string.settings_appearance)) {
+            Spacer(Modifier.height(12.dp))
             SettingsCard {
-                NavRow(
-                    label = stringResource(R.string.settings_appearance),
-                    description = stringResource(R.string.settings_appearance_desc),
-                    onClick = onAppearanceClick,
-                )
-            }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            // ── Help & About ──────────────────────────────────────────────────
-            // App identity, what's new, news, help, and the update check the version
-            // answers for, plus the diagnostics export and the screenshot overlay.
-            CollapsibleSection(label = stringResource(R.string.settings_help_about_section)) {
-            SettingsCard {
-                NavRow(
-                    label = stringResource(R.string.whats_new_title),
-                    description = stringResource(R.string.whats_new_history_desc),
-                    onClick = onWhatsNewClick,
-                )
-                RowDivider()
-                NavRow(
-                    label = stringResource(R.string.news_title),
-                    description = stringResource(R.string.news_settings_desc),
-                    onClick = onNewsClick,
-                )
-                RowDivider()
-                NavRow(
-                    label = stringResource(R.string.faq_settings_entry),
-                    description = stringResource(R.string.faq_title),
-                    onClick = onFaqClick,
-                )
-                RowDivider()
-                NavRow(
-                    label = stringResource(R.string.about_title),
-                    description = stringResource(R.string.settings_about_desc),
-                    onClick = onAboutClick,
-                )
-                RowDivider()
-                NavRow(
-                    label = stringResource(R.string.update_check_settings_row),
-                    description = stringResource(
-                        R.string.update_check_settings_summary,
-                        BuildConfig.VERSION_NAME,
-                    ),
-                    onClick = onCheckForUpdatesClick,
-                )
-                RowDivider()
                 NavRow(
                     label = stringResource(R.string.settings_copy_diagnostics),
                     description = stringResource(R.string.settings_copy_diagnostics_desc),
@@ -843,7 +820,6 @@ fun SettingsScreen(
                     },
                 )
             }
-            }
 
             // Debug-only large-library simulator. Compiled out of release by the BuildConfig.DEBUG
             // guard, invisible and unreachable in production builds.
@@ -856,6 +832,7 @@ fun SettingsScreen(
                 DeviceHealthDebugCard()
                 Spacer(Modifier.height(20.dp))
                 CompressionDebugCard(onDebugNavigate)
+            }
             }
                     }
                 } else {
@@ -938,7 +915,7 @@ fun SettingsScreen(
                     .border(0.5.dp, colors.pillBorder, pillShape)
                     .padding(horizontal = 16.dp, vertical = 9.dp),
             ) {
-                Text(stringResource(R.string.settings_title), color = colors.fgPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(if (more) R.string.settings_more_title else R.string.settings_title), color = colors.fgPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
 
             IconBubble(
@@ -1038,7 +1015,6 @@ fun AiSettingsScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_ai_enable),
-                description = stringResource(R.string.settings_ai_enable_desc),
                 checked = state.aiFeaturesEnabled,
                 onCheckedChange = viewModel::setAiFeaturesEnabled,
             )
@@ -1064,14 +1040,18 @@ fun AiSettingsScreen(
                 // Face recognition runs fully on-device, so it works without an account too; a guest's
                 // face and person rows go under a local partition. Like semantic search, its toggle and
                 // controls live on the dedicated sub-page reached through this row; the subtitle reflects
-                // the live scan state while a walk runs, and the feature description while it is off.
+                // the live scan state while a walk runs, and the feature description while it is off. A
+                // paused scan reads as paused whoever paused it, and the sub-page holds its Resume.
                 RowDivider()
                 val faceProgress by viewModel.faceIndexingProgress.collectAsStateWithLifecycle()
-                val faceGroupCount by viewModel.faceGroupCount.collectAsStateWithLifecycle()
+                val facePauseSwitch by viewModel.faceIndexingPaused.collectAsStateWithLifecycle()
                 NavRow(
                     label = stringResource(R.string.settings_ai_face_toggle),
                     description = if (state.faceEnabled) {
-                        faceRowSubtitle(faceProgress.state, faceGroupCount)
+                        faceRowSubtitle(
+                            faceProgress.state,
+                            paused = faceScanPausedRow(facePauseSwitch, faceProgress.state),
+                        )
                     } else {
                         stringResource(R.string.settings_ai_face_desc)
                     },
@@ -1123,20 +1103,23 @@ fun AiSettingsScreen(
             }
 
         }
+        // Save and Restore of the face and search data through the account's Drive, so another device of
+        // the account restores them instead of scanning again. The section hides itself for a guest, while
+        // the features are off, and on a device the Drive client does not run on.
+        MlDriveSyncSection(mlEnabled = state.aiFeaturesEnabled)
         Spacer(Modifier.height(20.dp))
     }
 }
 
-/** Subtitle for the Face recognition row: the live scan state while a walk runs or is paused,
- *  otherwise the count of groups found (or the feature description when none), so the row reads as a
- *  result when idle. */
+/** Subtitle for the Face recognition row: "Paused" whenever the scan is paused ([paused], see
+ *  [faceScanPausedRow]), the live scan state while a walk runs, otherwise the feature's one-line
+ *  description. Mirrors [semanticRowSubtitle]. */
 @Composable
-private fun faceRowSubtitle(state: FaceIndexingState, groupCount: Int): String = when (state) {
-    FaceIndexingState.Running, FaceIndexingState.WaitingModel ->
+private fun faceRowSubtitle(state: FaceIndexingState, paused: Boolean): String = when {
+    paused -> stringResource(R.string.settings_ai_indexing_paused)
+    state == FaceIndexingState.Running || state == FaceIndexingState.WaitingModel ->
         stringResource(R.string.settings_ai_indexing_running)
-    FaceIndexingState.Paused -> stringResource(R.string.settings_ai_indexing_paused)
-    else -> if (groupCount == 0) stringResource(R.string.settings_ai_face_desc)
-        else stringResource(R.string.settings_ai_groups_found, groupCount)
+    else -> stringResource(R.string.settings_ai_face_desc)
 }
 
 /** Subtitle for the Semantic search row: the live scan state while a walk runs or is paused, otherwise
@@ -1161,38 +1144,8 @@ fun FaceRecognitionScreen(
     onOpenExcluded: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val transferMsg by viewModel.faceTransferMsg.collectAsStateWithLifecycle()
-    val transferInProgress by viewModel.faceTransferInProgress.collectAsStateWithLifecycle()
-    val transferCtx = LocalContext.current
-    LaunchedEffect(transferMsg) {
-        transferMsg?.let {
-            Toast.makeText(transferCtx, it, Toast.LENGTH_LONG).show()
-            viewModel.clearFaceTransferMsg()
-        }
-    }
-    // After a successful export, offer to send the file on through the system share sheet (another app or
-    // a nearby device), so the file the user just saved can be passed to another phone without digging it
-    // out first. Declining just keeps the saved file.
-    val exportedUri by viewModel.faceExportedUri.collectAsStateWithLifecycle()
-    exportedUri?.let { uri ->
-        ConfirmSheet(
-            title = stringResource(R.string.settings_ai_export_share_title),
-            message = stringResource(R.string.settings_ai_export_share_msg),
-            confirmLabel = stringResource(R.string.share_action),
-            dismissLabel = stringResource(R.string.person_merge_suggest_later),
-            onConfirm = {
-                viewModel.clearFaceExportedUri()
-                runCatching {
-                    val send = ShareIntentBuilder.buildSendIntent(transferCtx, listOf(uri), "application/octet-stream")
-                    transferCtx.startActivity(
-                        Intent.createChooser(send, transferCtx.getString(R.string.share_chooser_title)),
-                    )
-                }
-            },
-            onDismiss = { viewModel.clearFaceExportedUri() },
-        )
-    }
     val faceUi by viewModel.faceIndexingUi.collectAsStateWithLifecycle()
+    val facePauseSwitch by viewModel.faceIndexingPaused.collectAsStateWithLifecycle()
     val faceMlActiveRail by viewModel.mlActiveRail.collectAsStateWithLifecycle()
     val faceGroups by viewModel.faceGroups.collectAsStateWithLifecycle()
     val faceCount by viewModel.faceCount.collectAsStateWithLifecycle()
@@ -1269,19 +1222,20 @@ fun FaceRecognitionScreen(
             Spacer(Modifier.height(20.dp))
             FaceStatusCard(
                 ui = faceUi,
+                paused = faceScanPausedRow(facePauseSwitch, faceUi.state),
                 groups = faceGroups,
                 faceCount = faceCount,
                 // Running state but the semantic walk holds the shared model gate = standing by behind it.
                 waitingForOther = faceMlActiveRail == eu.akoos.photos.util.MlRail.SEMANTIC &&
                     faceUi.state == FaceIndexingState.Running,
                 onSetPaused = viewModel::setFaceIndexingPaused,
+                onResume = viewModel::resumeFaceIndexing,
                 onOpenPerson = onOpenPerson,
             )
             Spacer(Modifier.height(20.dp))
             SettingsCard {
                 ToggleRow(
                     label = stringResource(R.string.settings_face_auto_merge),
-                    description = stringResource(R.string.settings_face_auto_merge_desc),
                     checked = state.faceAutoMerge,
                     onCheckedChange = viewModel::setFaceAutoMerge,
                 )
@@ -1292,7 +1246,6 @@ fun FaceRecognitionScreen(
             SettingsCard {
                 NavRow(
                     label = stringResource(R.string.settings_face_excluded),
-                    description = stringResource(R.string.settings_face_excluded_desc),
                     onClick = onOpenExcluded,
                 )
             }
@@ -1301,17 +1254,6 @@ fun FaceRecognitionScreen(
                 onRescan = viewModel::rescanFaces,
                 onClear = viewModel::clearFaceIndex,
             )
-            // The encrypted export and import seal the face index to the account's own key, so they need
-            // an account; a guest has no key to seal to. Hidden without one, while the rest of the screen
-            // (the on-device scan, people and maintenance) runs for a guest just as it does signed in.
-            if (state.isSignedIn) {
-                Spacer(Modifier.height(20.dp))
-                FaceTransferCard(
-                    inProgress = transferInProgress,
-                    onExport = viewModel::exportFaceIndex,
-                    onImport = viewModel::importFaceIndex,
-                )
-            }
         }
 
         // The face model drawers. Download is the consent raised when the feature is switched on with no
@@ -1363,20 +1305,24 @@ fun FaceRecognitionScreen(
 
 /**
  * Status of the face scan: the groups found (named and not-yet-named) and the faces detected, a one-line
- * state label, a progress bar only while a walk is running or paused, a preview row of the groups that
- * opens one to name it, and a pause / resume control while a walk is live.
+ * state label, a progress bar only while a walk is running or paused, a preview row of the groups where
+ * a named person opens their page and a nameless group the name-or-merge sheet, a pause control while a
+ * bulk walk is live, and, whenever the scan is [paused] for any reason, the paused row with Resume.
  */
 @Composable
 private fun FaceStatusCard(
     ui: FaceIndexingUi,
+    paused: Boolean,
     groups: List<eu.akoos.photos.presentation.gallery.PersonUi>,
     faceCount: Int,
     waitingForOther: Boolean,
     onSetPaused: (Boolean) -> Unit,
+    onResume: () -> Unit,
     onOpenPerson: (Long) -> Unit,
 ) {
     val colors = AppColors.current
     val state = ui.state
+    var nameOrMerge by remember { mutableStateOf<eu.akoos.photos.presentation.gallery.PersonUi?>(null) }
     // While a walk is active or pending, a persistent device-health block is what has actually parked
     // it: the scheduler keeps reporting Running when it stands down for a warm phone, a low battery or
     // the power saver, so name that reason in place of the plain running / paused label.
@@ -1399,15 +1345,17 @@ private fun FaceStatusCard(
     // A status line only appears for a bulk index (or while waiting for the model); an idle or finished
     // scan, and a small background residual, show just the people summary with no "not started" wording.
     // Standing by behind the semantic walk (they share one model gate) takes precedence over the plain
-    // running label, so a frozen count reads as the wait it is.
+    // running label, so a frozen count reads as the wait it is. A paused scan always says so, however few
+    // photos are left, as it does not continue until resumed.
     val stateLabel = when {
+        paused -> stringResource(R.string.settings_ai_indexing_paused)
         state == FaceIndexingState.WaitingModel -> stringResource(R.string.settings_ai_indexing_waiting)
         !faceBulkIndex -> null
         waitingForOther -> stringResource(R.string.settings_ai_indexing_waiting_other)
-        else -> healthLabel ?: when (state) {
-            FaceIndexingState.Running -> stringResource(R.string.settings_ai_indexing_running)
-            FaceIndexingState.Paused -> stringResource(R.string.settings_ai_indexing_paused)
-            else -> null
+        else -> healthLabel ?: if (state == FaceIndexingState.Running) {
+            stringResource(R.string.settings_ai_indexing_running)
+        } else {
+            null
         }
     }
     val showBar = faceBulkIndex
@@ -1439,6 +1387,14 @@ private fun FaceStatusCard(
                 Spacer(Modifier.height(4.dp))
                 Text(stateLabel, color = colors.fgMute, fontSize = 12.5.sp)
             }
+            if (paused) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    stringResource(R.string.settings_ai_indexing_paused_desc),
+                    color = colors.fgMute,
+                    fontSize = 12.5.sp,
+                )
+            }
 
             if (showBar) {
                 Spacer(Modifier.height(12.dp))
@@ -1455,8 +1411,9 @@ private fun FaceStatusCard(
                 )
             }
 
-            // The groups the scan has formed, named and not-yet-named alike, as round face tiles; tapping
-            // one opens that group to name it or browse its photos.
+            // The groups the scan has formed, named and not-yet-named alike, as round face tiles. A named
+            // person opens their page; a group with no name opens the name-or-merge sheet, whose "See
+            // photos" opens the group's page.
             if (groups.isNotEmpty()) {
                 Spacer(Modifier.height(14.dp))
                 LazyRow(
@@ -1464,40 +1421,55 @@ private fun FaceStatusCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(groups, key = { it.personId }) { person ->
-                        PersonTile(person = person, selected = false, onClick = { onOpenPerson(person.personId) })
+                        PersonTile(
+                            person = person,
+                            selected = false,
+                            onClick = {
+                                when (personTapTarget(person)) {
+                                    PersonTapTarget.Page -> onOpenPerson(person.personId)
+                                    PersonTapTarget.NameOrMerge -> { nameOrMerge = person }
+                                }
+                            },
+                        )
                     }
                 }
             }
 
             // No manual start: indexing runs automatically and new photos are picked up on their own, so the
-            // only control is to pause a live bulk scan or resume a paused one. Idle, finished, a small
-            // background residual, and model-waiting show no button at all.
-            if (faceBulkIndex) {
-                when (state) {
-                    FaceIndexingState.Running -> {
-                        Spacer(Modifier.height(16.dp))
-                        PrimaryButton(
-                            label = stringResource(R.string.settings_ai_pause),
-                            icon = Icons.Default.Pause,
-                            onClick = { onSetPaused(true) },
-                            enabled = ui.actionEnabled,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    FaceIndexingState.Paused -> {
-                        Spacer(Modifier.height(16.dp))
-                        PrimaryButton(
-                            label = stringResource(R.string.settings_ai_resume),
-                            icon = Icons.Default.PlayArrow,
-                            onClick = { onSetPaused(false) },
-                            enabled = ui.actionEnabled,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    else -> {}
+            // only controls are Pause on a live bulk scan and Resume on a paused one. Resume shows whenever
+            // the scan is paused, whoever paused it and however little is left, and always lifts the pause:
+            // a health block only parks the resumed walk. Idle, finished, a small background residual, and
+            // model-waiting show no button at all.
+            when {
+                paused -> {
+                    Spacer(Modifier.height(16.dp))
+                    PrimaryButton(
+                        label = stringResource(R.string.settings_ai_resume),
+                        icon = Icons.Default.PlayArrow,
+                        onClick = onResume,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                faceBulkIndex && state == FaceIndexingState.Running -> {
+                    Spacer(Modifier.height(16.dp))
+                    PrimaryButton(
+                        label = stringResource(R.string.settings_ai_pause),
+                        icon = Icons.Default.Pause,
+                        onClick = { onSetPaused(true) },
+                        enabled = ui.actionEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
+    }
+
+    nameOrMerge?.let { group ->
+        NameOrMergeSheet(
+            subject = rememberGroupSubject(group),
+            onDismiss = { nameOrMerge = null },
+            onOpenGroup = onOpenPerson,
+        )
     }
 }
 
@@ -1518,14 +1490,12 @@ private fun FaceMaintenanceCard(
     SettingsCard {
         ActionRow(
             label = stringResource(R.string.settings_ai_rescan),
-            description = stringResource(R.string.settings_face_rescan_desc),
             icon = Icons.Default.Refresh,
             onClick = { showRescanConfirm = true },
         )
         RowDivider()
         ActionRow(
             label = stringResource(R.string.settings_ai_clear),
-            description = stringResource(R.string.settings_face_clear_desc),
             icon = Icons.Default.DeleteOutline,
             destructive = true,
             onClick = { showClearConfirm = true },
@@ -1551,69 +1521,6 @@ private fun FaceMaintenanceCard(
             onConfirm = { showClearConfirm = false; onClear() },
             onDismiss = { showClearConfirm = false },
             destructive = true,
-        )
-    }
-}
-
-/**
- * Transfer the portable face index. Export warns that the file holds biometric fingerprints; import
- * explains it folds a saved file into this device and regroups, keeping the current faces.
- */
-@Composable
-private fun FaceTransferCard(
-    inProgress: Boolean,
-    onExport: (android.net.Uri) -> Unit,
-    onImport: (android.net.Uri) -> Unit,
-) {
-    var showExportWarn by remember { mutableStateOf(false) }
-    var showImportConfirm by remember { mutableStateOf(false) }
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/octet-stream"),
-    ) { uri -> uri?.let(onExport) }
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri -> uri?.let(onImport) }
-
-    SectionLabel(stringResource(R.string.settings_face_transfer))
-    Spacer(Modifier.height(8.dp))
-    SettingsCard {
-        ActionRow(
-            label = stringResource(R.string.settings_ai_export),
-            description = if (inProgress) stringResource(R.string.settings_ai_transfer_working)
-                else stringResource(R.string.settings_face_export_desc),
-            icon = Icons.Default.Upload,
-            onClick = { showExportWarn = true },
-            enabled = !inProgress,
-        )
-        RowDivider()
-        ActionRow(
-            label = stringResource(R.string.settings_ai_import),
-            description = if (inProgress) stringResource(R.string.settings_ai_transfer_working)
-                else stringResource(R.string.settings_face_import_desc),
-            icon = Icons.Default.Download,
-            onClick = { showImportConfirm = true },
-            enabled = !inProgress,
-        )
-    }
-
-    if (showExportWarn) {
-        ConfirmDialog(
-            title = stringResource(R.string.settings_ai_export_warn_title),
-            message = stringResource(R.string.settings_ai_export_warn_msg),
-            confirmLabel = stringResource(R.string.settings_ai_export),
-            dismissLabel = stringResource(R.string.cancel),
-            onConfirm = { showExportWarn = false; exportLauncher.launch("photosforproton-faces.ppfi") },
-            onDismiss = { showExportWarn = false },
-        )
-    }
-    if (showImportConfirm) {
-        ConfirmDialog(
-            title = stringResource(R.string.settings_ai_import_confirm_title),
-            message = stringResource(R.string.settings_ai_import_confirm_msg),
-            confirmLabel = stringResource(R.string.settings_ai_import),
-            dismissLabel = stringResource(R.string.cancel),
-            onConfirm = { showImportConfirm = false; importLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
-            onDismiss = { showImportConfirm = false },
         )
     }
 }
@@ -1861,14 +1768,12 @@ private fun SemanticMaintenanceCard(
     SettingsCard {
         ActionRow(
             label = stringResource(R.string.settings_ai_semantic_rescan),
-            description = stringResource(R.string.settings_ai_semantic_rescan_desc),
             icon = Icons.Default.Refresh,
             onClick = { showRescanConfirm = true },
         )
         RowDivider()
         ActionRow(
             label = stringResource(R.string.settings_ai_semantic_clear),
-            description = stringResource(R.string.settings_ai_semantic_clear_desc),
             icon = Icons.Default.DeleteOutline,
             destructive = true,
             onClick = { showClearConfirm = true },
@@ -1912,12 +1817,44 @@ fun SyncSettingsScreen(
     val colors = AppColors.current
     SettingsSubPageScaffold(title = stringResource(R.string.sync_section), onBack = onBack) {
         // ── What gets backed up ──────────────────────────────────────────────
+        PrimaryButton(
+            label = stringResource(R.string.settings_sync_now),
+            onClick = { viewModel.syncNow() },
+            modifier = Modifier.fillMaxWidth(),
+            icon = Icons.Default.Sync,
+            loading = state.isSyncing,
+        )
+        Spacer(Modifier.height(20.dp))
+
+        // ── Network usage ────────────────────────────────────────────────────
+        SectionLabel(stringResource(R.string.settings_network_section))
+        Spacer(Modifier.height(8.dp))
+        SettingsCard {
+            // Sync Wi-Fi only gates backing UP to Drive (meaningful only while continuous
+            // backup is on); full-res Wi-Fi only gates downloading full-resolution photos
+            // for the viewer. Both are network-consumption choices, grouped here.
+            ToggleRow(
+                label = stringResource(R.string.settings_sync_wifi_only),
+                checked = state.syncWifiOnly,
+                onCheckedChange = viewModel::setSyncWifiOnly,
+                enabled = state.autoSync,
+            )
+            RowDivider()
+            ToggleRow(
+                label = stringResource(R.string.settings_fullres_wifi_only),
+                description = stringResource(R.string.settings_fullres_wifi_only_desc),
+                checked = state.fullresWifiOnly,
+                onCheckedChange = viewModel::setFullresWifiOnly,
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
         SectionLabel(stringResource(R.string.settings_what_backed_up_section))
         Spacer(Modifier.height(8.dp))
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_backup_everything),
-                description = stringResource(R.string.settings_backup_everything_desc),
                 checked = state.backupEverything,
                 onCheckedChange = viewModel::setBackupEverything,
                 enabled = state.autoSync,
@@ -1956,7 +1893,6 @@ fun SyncSettingsScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_continuous_backup),
-                description = stringResource(R.string.settings_continuous_backup_desc),
                 checked = state.autoSync,
                 onCheckedChange = viewModel::setAutoSync,
             )
@@ -1984,63 +1920,6 @@ fun SyncSettingsScreen(
             )
         }
 
-        Spacer(Modifier.height(20.dp))
-
-        // ── Network usage ────────────────────────────────────────────────────
-        SectionLabel(stringResource(R.string.settings_network_section))
-        Spacer(Modifier.height(8.dp))
-        SettingsCard {
-            // Sync Wi-Fi only gates backing UP to Drive (meaningful only while continuous
-            // backup is on); full-res Wi-Fi only gates downloading full-resolution photos
-            // for the viewer. Both are network-consumption choices, grouped here.
-            ToggleRow(
-                label = stringResource(R.string.settings_sync_wifi_only),
-                description = stringResource(R.string.settings_sync_wifi_desc),
-                checked = state.syncWifiOnly,
-                onCheckedChange = viewModel::setSyncWifiOnly,
-                enabled = state.autoSync,
-            )
-            RowDivider()
-            ToggleRow(
-                label = stringResource(R.string.settings_fullres_wifi_only),
-                description = stringResource(R.string.settings_fullres_wifi_only_desc),
-                checked = state.fullresWifiOnly,
-                onCheckedChange = viewModel::setFullresWifiOnly,
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        // ── Sync now action row ──────────────────────────────────────────────
-        // Imperative one-tap action (not a persistent setting), so it sits on its
-        // own card with an accent label that reads as a button.
-        SettingsCard {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !state.isSyncing) { viewModel.syncNow() }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.settings_sync_now),
-                    color = colors.fgPrimary,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f),
-                )
-                if (state.isSyncing) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = colors.accent)
-                } else {
-                    Text(
-                        stringResource(R.string.settings_sync_now_action),
-                        color = colors.accent,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -2067,7 +1946,6 @@ fun BackupProcessingScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_rename_on_upload),
-                description = stringResource(R.string.settings_rename_on_upload_desc),
                 checked = state.renameToCaptureDate,
                 onCheckedChange = viewModel::setRenameToCaptureDate,
             )
@@ -2082,7 +1960,6 @@ fun BackupProcessingScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_strip_metadata_upload),
-                description = stringResource(R.string.settings_strip_metadata_upload_desc),
                 checked = state.stripOnUpload,
                 onCheckedChange = viewModel::setStripOnUpload,
             )
@@ -2129,7 +2006,6 @@ fun BackupProcessingScreen(
                     RowDivider()
                     ToggleRow(
                         label = stringResource(R.string.settings_strip_gps),
-                        description = stringResource(R.string.settings_strip_gps_desc),
                         checked = state.stripGps,
                         onCheckedChange = viewModel::setStripGps,
                         indented = true,
@@ -2137,7 +2013,6 @@ fun BackupProcessingScreen(
                     RowDivider()
                     ToggleRow(
                         label = stringResource(R.string.settings_strip_camera),
-                        description = stringResource(R.string.settings_strip_camera_desc),
                         checked = state.stripCameraInfo,
                         onCheckedChange = viewModel::setStripCameraInfo,
                         indented = true,
@@ -2145,7 +2020,6 @@ fun BackupProcessingScreen(
                     RowDivider()
                     ToggleRow(
                         label = stringResource(R.string.settings_strip_timestamp),
-                        description = stringResource(R.string.settings_strip_timestamp_desc),
                         checked = state.stripTimestamp,
                         onCheckedChange = viewModel::setStripTimestamp,
                         indented = true,
@@ -2153,7 +2027,6 @@ fun BackupProcessingScreen(
                     RowDivider()
                     ToggleRow(
                         label = stringResource(R.string.settings_strip_software),
-                        description = stringResource(R.string.settings_strip_software_desc),
                         checked = state.stripSoftwareInfo,
                         onCheckedChange = viewModel::setStripSoftwareInfo,
                         indented = true,
@@ -2220,7 +2093,6 @@ fun BackupProcessingScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_compress_photos),
-                description = stringResource(R.string.settings_compress_upload_desc),
                 checked = state.compressOnUpload,
                 onCheckedChange = viewModel::setCompressOnUpload,
             )
@@ -2230,7 +2102,13 @@ fun BackupProcessingScreen(
                     selected = state.compressTier,
                     onSelect = viewModel::setCompressTier,
                     descriptionRes = { it.descRes },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    modifier = Modifier.padding(vertical = 14.dp),
+                )
+                RowDivider()
+                ToggleRow(
+                    label = stringResource(R.string.settings_compress_hdr_photos),
+                    checked = state.compressHdrPhotos,
+                    onCheckedChange = viewModel::setCompressHdrPhotos,
                 )
             }
         }
@@ -2238,13 +2116,12 @@ fun BackupProcessingScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_compress_videos),
-                description = stringResource(R.string.settings_compress_videos_desc),
                 checked = state.compressVideosOnUpload,
                 onCheckedChange = viewModel::setCompressVideosOnUpload,
             )
             if (state.compressVideosOnUpload) {
                 RowDivider()
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Column(modifier = Modifier.padding(vertical = 14.dp)) {
                     CodecPicker(
                         selected = state.videoCodec,
                         capabilities = state.encoderCapabilities,
@@ -2257,7 +2134,11 @@ fun BackupProcessingScreen(
                         descriptionRes = { it.videoDescRes },
                     )
                     Spacer(Modifier.height(10.dp))
-                    EstimateLine(state.encoderCapabilities, VideoCompressionProfile(state.videoCodec, state.compressTierVideo))
+                    EstimateLine(
+                        state.encoderCapabilities,
+                        VideoCompressionProfile(state.videoCodec, state.compressTierVideo),
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
                 }
             }
         }
@@ -2344,9 +2225,7 @@ fun StorageSettingsScreen(
 @Composable
 fun PrivacySecuritySettingsScreen(
     onBack: () -> Unit,
-    onOfflinePhotosClick: () -> Unit = {},
     onHiddenAlbumClick: () -> Unit = {},
-    onShareMetadataClick: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -2359,25 +2238,57 @@ fun PrivacySecuritySettingsScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_clear_cache_on_close),
-                description = stringResource(R.string.settings_clear_cache_on_close_desc),
                 checked = state.clearCacheOnAppClose,
                 onCheckedChange = viewModel::setClearCacheOnAppClose,
             )
             RowDivider()
-            NavRow(
+            ToggleRow(
                 label = stringResource(R.string.settings_strip_share),
-                onClick = onShareMetadataClick,
+                description = stringResource(R.string.settings_strip_share_desc),
+                checked = state.stripOnShare,
+                onCheckedChange = viewModel::setStripOnShare,
             )
+            if (state.stripOnShare) {
+                RowDivider()
+                ToggleRow(
+                    label = stringResource(R.string.settings_strip_gps),
+                    checked = state.stripShareGps,
+                    onCheckedChange = viewModel::setStripShareGps,
+                    indented = true,
+                )
+                RowDivider()
+                ToggleRow(
+                    label = stringResource(R.string.settings_strip_camera),
+                    checked = state.stripShareCameraInfo,
+                    onCheckedChange = viewModel::setStripShareCameraInfo,
+                    indented = true,
+                )
+                RowDivider()
+                ToggleRow(
+                    label = stringResource(R.string.settings_strip_timestamp),
+                    checked = state.stripShareTimestamp,
+                    onCheckedChange = viewModel::setStripShareTimestamp,
+                    indented = true,
+                )
+                RowDivider()
+                ToggleRow(
+                    label = stringResource(R.string.settings_strip_software),
+                    checked = state.stripShareSoftwareInfo,
+                    onCheckedChange = viewModel::setStripShareSoftwareInfo,
+                    indented = true,
+                )
+                RowDivider()
+                ToggleRow(
+                    label = stringResource(R.string.settings_strip_authorship),
+                    checked = state.stripShareAuthorship,
+                    onCheckedChange = viewModel::setStripShareAuthorship,
+                    indented = true,
+                )
+            }
             // Offline photos and the telemetry mirror are both Proton-account concepts, so the whole
             // group is hidden without a signed-in account, and its leading divider with it so guest
             // mode does not end this section on a dangling separator.
             if (state.isSignedIn) {
-                RowDivider()
-                NavRow(
-                    label = stringResource(R.string.settings_offline_photos),
-                    description = stringResource(R.string.offline_screen_empty),
-                    onClick = onOfflinePhotosClick,
-                )
                 RowDivider()
                 // Telemetry events fired by the embedded ProtonCore stack are gated by
                 // IsTelemetryEnabledImpl, which reads the server side `Telemetry`
@@ -2400,12 +2311,6 @@ fun PrivacySecuritySettingsScreen(
         // Footnote: the map draws its background from a public tile endpoint, which is the
         // one place the app reaches a server outside Proton.
         Spacer(Modifier.height(10.dp))
-        Text(
-            stringResource(R.string.settings_privacy_map_tiles_note),
-            color = AppColors.current.fgMute,
-            fontSize = 12.5.sp,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
 
         Spacer(Modifier.height(20.dp))
 
@@ -2413,11 +2318,14 @@ fun PrivacySecuritySettingsScreen(
         SectionLabel(stringResource(R.string.settings_security))
         Spacer(Modifier.height(8.dp))
         SettingsCard {
+            // Turning the lock off or lengthening its timeout asks for the app lock prompt first.
+            val context = LocalContext.current
             ToggleRow(
                 label = stringResource(R.string.settings_app_lock),
-                description = stringResource(R.string.settings_app_lock_desc),
                 checked = state.appLockEnabled,
-                onCheckedChange = { viewModel.setAppLockEnabled(it) },
+                onCheckedChange = { enabled ->
+                    viewModel.setAppLockEnabled(enabled) { showAppLockPrompt(context, onSuccess = it) }
+                },
             )
             if (state.appLockEnabled) {
                 RowDivider()
@@ -2425,84 +2333,37 @@ fun PrivacySecuritySettingsScreen(
                     label = stringResource(R.string.settings_app_lock_timeout),
                     description = stringResource(R.string.settings_app_lock_timeout_desc),
                     selectedSeconds = state.appLockTimeoutSeconds,
-                    onSelected = viewModel::setAppLockTimeoutSeconds,
+                    onSelected = { seconds ->
+                        viewModel.setAppLockTimeoutSeconds(seconds) { showAppLockPrompt(context, onSuccess = it) }
+                    },
                 )
             }
         }
 
         Spacer(Modifier.height(20.dp))
         // Hidden vault, a lock/biometric-gated photo collection, so it belongs with the app lock.
+        var vaultPasswordStep by remember { mutableStateOf(VaultPasswordStep.None) }
+        val vaultPasswordViewModel: VaultPasswordViewModel = hiltViewModel()
+        val vaultPasswordSet by vaultPasswordViewModel.isSet.collectAsStateWithLifecycle()
         SettingsCard {
             NavRow(
                 label = stringResource(R.string.settings_hidden_photos),
                 description = stringResource(R.string.settings_hidden_photos_desc),
                 onClick = onHiddenAlbumClick,
             )
-        }
-    }
-}
-
-// ── Remove metadata when sharing (sub-page) ───────────────────────────────────
-
-/** Per-field control over what a shared copy carries. A master toggle plus, once it is on, the five
- *  field choices. The labels are reused from the upload stripper, but the config written here is a
- *  separate one that only the share paths consult; the on-device original is never modified. */
-@Composable
-fun ShareMetadataScreen(
-    onBack: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel(),
-) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    SettingsSubPageScaffold(title = stringResource(R.string.settings_strip_share_title), onBack = onBack) {
-        SettingsCard {
-            ToggleRow(
-                label = stringResource(R.string.settings_strip_share),
-                description = stringResource(R.string.settings_strip_share_desc),
-                checked = state.stripOnShare,
-                onCheckedChange = viewModel::setStripOnShare,
+            RowDivider()
+            VaultPasswordSettingRow(
+                isSet = vaultPasswordSet,
+                onClick = {
+                    vaultPasswordStep = if (vaultPasswordSet) VaultPasswordStep.Choose else VaultPasswordStep.Set
+                },
             )
-            if (state.stripOnShare) {
-                RowDivider()
-                ToggleRow(
-                    label = stringResource(R.string.settings_strip_gps),
-                    description = stringResource(R.string.settings_strip_gps_desc),
-                    checked = state.stripShareGps,
-                    onCheckedChange = viewModel::setStripShareGps,
-                    indented = true,
-                )
-                RowDivider()
-                ToggleRow(
-                    label = stringResource(R.string.settings_strip_camera),
-                    description = stringResource(R.string.settings_strip_camera_desc),
-                    checked = state.stripShareCameraInfo,
-                    onCheckedChange = viewModel::setStripShareCameraInfo,
-                    indented = true,
-                )
-                RowDivider()
-                ToggleRow(
-                    label = stringResource(R.string.settings_strip_timestamp),
-                    description = stringResource(R.string.settings_strip_timestamp_desc),
-                    checked = state.stripShareTimestamp,
-                    onCheckedChange = viewModel::setStripShareTimestamp,
-                    indented = true,
-                )
-                RowDivider()
-                ToggleRow(
-                    label = stringResource(R.string.settings_strip_software),
-                    description = stringResource(R.string.settings_strip_software_desc),
-                    checked = state.stripShareSoftwareInfo,
-                    onCheckedChange = viewModel::setStripShareSoftwareInfo,
-                    indented = true,
-                )
-                RowDivider()
-                ToggleRow(
-                    label = stringResource(R.string.settings_strip_authorship),
-                    checked = state.stripShareAuthorship,
-                    onCheckedChange = viewModel::setStripShareAuthorship,
-                    indented = true,
-                )
-            }
         }
+        VaultPasswordFlow(
+            step = vaultPasswordStep,
+            onStep = { vaultPasswordStep = it },
+            viewModel = vaultPasswordViewModel,
+        )
     }
 }
 
@@ -3223,10 +3084,13 @@ private fun DeviceHealthDebugCard(
 }
 
 /**
- * DEBUG-only card to drive the [eu.akoos.photos.data.repository.drive.LargeLibrarySimulator].
- * Set N, Populate to generate N synthetic photos that exercise the real decrypt + cache treadmill
- * with no CDN traffic, or Clear to remove them. Only ever rendered behind a BuildConfig.DEBUG guard.
- * Strings are inline English, this surface never ships, so it isn't localized.
+ * DEBUG-only card to drive the [eu.akoos.photos.data.repository.drive.LargeLibrarySimulator] and the
+ * [eu.akoos.photos.data.repository.drive.LargeLibraryDeviceSimulator]. Set N, Populate to generate N
+ * synthetic photos that exercise the real decrypt + cache treadmill with no CDN traffic, or Clear to
+ * remove them. The device part writes real tiny JPEGs into their own folder so the device scan, backup,
+ * tag scan and EXIF walk meet a library of that size, and removes exactly those again. Only ever rendered
+ * behind a BuildConfig.DEBUG guard. Strings are inline English, this surface never ships, so it isn't
+ * localized.
  */
 @Composable
 private fun LargeLibrarySimCard(
@@ -3234,7 +3098,13 @@ private fun LargeLibrarySimCard(
 ) {
     val colors = AppColors.current
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val device by viewModel.deviceState.collectAsStateWithLifecycle()
     var text by remember(state.count) { mutableStateOf(if (state.count > 0) state.count.toString() else "") }
+    var deviceText by remember(state.deviceTarget) {
+        mutableStateOf(if (state.deviceTarget > 0) state.deviceTarget.toString() else "")
+    }
+    var confirmDeviceRemove by remember { mutableStateOf(false) }
+    val deviceFolder = eu.akoos.photos.data.repository.drive.LargeLibraryDeviceSim.RELATIVE_PATH
 
     SectionLabel("Developer, large library simulator")
     Spacer(Modifier.height(8.dp))
@@ -3287,6 +3157,110 @@ private fun LargeLibrarySimCard(
                 Text(msg, color = colors.fgDim, fontSize = 12.sp)
             }
         }
+    }
+    Spacer(Modifier.height(12.dp))
+    SettingsCard {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Device photos", color = colors.fgPrimary, fontSize = 13.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Write tiny real JPEGs, dated across the years and most with GPS, into $deviceFolder so the " +
+                    "device scan, backup, tag scan and EXIF walk meet a library of that size. Generate tops " +
+                    "the folder up to the target and keeps running after Settings closes. Select the PFP-Sim " +
+                    "folder for backup to exercise reconcile and upload.",
+                color = colors.fgMute, fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            androidx.compose.material3.OutlinedTextField(
+                value = deviceText,
+                onValueChange = { raw ->
+                    val digits = raw.filter { it.isDigit() }.take(7)
+                    deviceText = digits
+                    viewModel.setDeviceTarget(digits.toIntOrNull() ?: 0)
+                },
+                label = { Text("Target photo count (e.g. 110000)") },
+                singleLine = true,
+                enabled = !device.running,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                listOf(110_000, 150_000).forEach { preset ->
+                    TextButton(
+                        onClick = {
+                            deviceText = preset.toString()
+                            viewModel.setDeviceTarget(preset)
+                        },
+                        enabled = !device.running,
+                    ) { Text("${preset / 1000}k") }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Button(
+                    onClick = { viewModel.generateDevicePhotos() },
+                    enabled = !device.running && state.deviceTarget > 0,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Generate") }
+                Spacer(Modifier.width(12.dp))
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { confirmDeviceRemove = true },
+                    enabled = !device.running,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Remove all") }
+            }
+            if (device.running) {
+                Spacer(Modifier.height(12.dp))
+                if (device.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { (device.done.toFloat() / device.total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = colors.accent,
+                        trackColor = colors.trackBg,
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = colors.accent,
+                        trackColor = colors.trackBg,
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        String.format(java.util.Locale.US, "%,d / %,d", device.done, device.total),
+                        color = colors.fgMute, fontSize = 12.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { viewModel.cancelDeviceWork() }) { Text("Cancel") }
+                }
+            }
+            if (device.onDevice >= 0) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    String.format(java.util.Locale.US, "On the device: %,d", device.onDevice),
+                    color = colors.fgDim, fontSize = 12.sp,
+                )
+            }
+            device.message?.let { msg ->
+                Spacer(Modifier.height(6.dp))
+                Text(msg, color = colors.fgDim, fontSize = 12.sp)
+            }
+        }
+    }
+    if (confirmDeviceRemove) {
+        eu.akoos.photos.presentation.common.ConfirmDialog(
+            title = "Remove simulated device photos",
+            message = "Deletes every simulator file in $deviceFolder, and nothing else.",
+            confirmLabel = "Remove",
+            dismissLabel = "Cancel",
+            onConfirm = {
+                confirmDeviceRemove = false
+                viewModel.removeDevicePhotos()
+            },
+            onDismiss = { confirmDeviceRemove = false },
+            destructive = true,
+        )
     }
 }
 

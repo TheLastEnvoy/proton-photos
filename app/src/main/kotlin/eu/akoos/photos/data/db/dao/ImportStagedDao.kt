@@ -96,6 +96,10 @@ interface ImportStagedDao {
     )
     fun observeAlbumSummary(zipId: String): Flow<List<ImportAlbumCount>>
 
+    /** The entry names this run has staged so far, so a resumed staging pass steps over them. */
+    @Query("SELECT entryName FROM import_staged WHERE zipId = :zipId")
+    suspend fun entryNames(zipId: String): List<String>
+
     /** How many entries this run staged in all, review choices included. */
     @Query("SELECT COUNT(*) FROM import_staged WHERE zipId = :zipId")
     suspend fun countForZip(zipId: String): Int
@@ -134,4 +138,8 @@ interface ImportStagedDao {
     /** Drops staged rows left behind before a cutoff, for a run a user picked but never finished. */
     @Query("DELETE FROM import_staged WHERE stagedAt < :cutoffMs")
     suspend fun deleteOlderThan(cutoffMs: Long)
+
+    /** Remove every staged entry, for the sign-out that ends the account they were staged for. */
+    @Query("DELETE FROM import_staged")
+    suspend fun deleteAll()
 }

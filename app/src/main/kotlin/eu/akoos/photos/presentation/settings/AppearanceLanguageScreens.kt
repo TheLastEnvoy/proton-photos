@@ -57,16 +57,18 @@ import eu.akoos.photos.R
 import eu.akoos.photos.presentation.settings.components.CollapsibleSection
 import eu.akoos.photos.presentation.settings.components.NavRow
 import eu.akoos.photos.presentation.settings.components.RowDivider
+import eu.akoos.photos.presentation.settings.components.SectionLabel
 import eu.akoos.photos.presentation.settings.components.SettingsCard
 import eu.akoos.photos.presentation.settings.components.SettingsSubPageScaffold
 import eu.akoos.photos.presentation.settings.components.ToggleRow
 import eu.akoos.photos.presentation.theme.AppColors
 import eu.akoos.photos.presentation.theme.paletteAccent
+import eu.akoos.photos.presentation.util.AppLanguages
 
 /**
  * Appearance hub — menu rows to the theme/palette and language sub-pages, plus the photo
- * timeline page. Kept thin so each concern lives on its own focused page instead of one
- * long mixed scroll.
+ * timeline page and the Albums tab's page. Kept thin so each concern lives on its own focused
+ * page instead of one long mixed scroll.
  */
 @Composable
 fun AppearanceSettingsScreen(
@@ -74,8 +76,12 @@ fun AppearanceSettingsScreen(
     onThemeClick: () -> Unit = {},
     onLanguageClick: () -> Unit = {},
     onTimelineFilterClick: () -> Unit = {},
+    onAlbumsSettingsClick: () -> Unit = {},
+    onLandingTabClick: () -> Unit = {},
 ) {
     SettingsSubPageScaffold(title = stringResource(R.string.settings_appearance), onBack = onBack) {
+        SectionLabel(stringResource(R.string.settings_section_look))
+        Spacer(Modifier.height(8.dp))
         SettingsCard {
             NavRow(
                 label = stringResource(R.string.settings_theme_palette),
@@ -86,16 +92,31 @@ fun AppearanceSettingsScreen(
                 label = stringResource(R.string.language_section),
                 onClick = onLanguageClick,
             )
-            RowDivider()
-            // Photos timeline page: the single home for the timeline display settings
-            // (layout, category bar, albums, device folders, and the landing tab).
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // The photo library's own settings: the timeline's display (layout, category bar, albums,
+        // device folders), the Albums tab's page and the tab the app opens on.
+        SectionLabel(stringResource(R.string.settings_section_library))
+        Spacer(Modifier.height(8.dp))
+        SettingsCard {
             NavRow(
                 label = stringResource(R.string.settings_timeline),
                 onClick = onTimelineFilterClick,
             )
+            RowDivider()
+            NavRow(
+                label = stringResource(R.string.gallery_tab_albums),
+                onClick = onAlbumsSettingsClick,
+            )
+            RowDivider()
+            NavRow(
+                label = stringResource(R.string.settings_landing_tab),
+                onClick = onLandingTabClick,
+            )
         }
-    }
-}
+    }}
 
 /** Theme mode (System / Light / Dark) plus the colour palette. */
 @Composable
@@ -161,7 +182,6 @@ fun ThemeSettingsScreen(
         SettingsCard {
             ToggleRow(
                 label = stringResource(R.string.settings_tint_cloud),
-                description = stringResource(R.string.settings_tint_cloud_summary),
                 checked = state.tintCloudWithAccent,
                 onCheckedChange = { viewModel.setTintCloudWithAccent(it) },
             )
@@ -176,7 +196,6 @@ fun ThemeSettingsScreen(
             SettingsCard {
                 ToggleRow(
                     label = stringResource(R.string.settings_amoled_black),
-                    description = stringResource(R.string.settings_amoled_black_summary),
                     checked = state.amoledBlack,
                     onCheckedChange = { viewModel.setAmoledBlack(it) },
                 )
@@ -196,7 +215,7 @@ fun LanguageSettingsScreen(
     val colors = AppColors.current
 
     SettingsSubPageScaffold(title = stringResource(R.string.language_section), onBack = onBack) {
-        val options = remember_languageOptions()
+        val options = AppLanguages.all
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -216,24 +235,6 @@ fun LanguageSettingsScreen(
         }
     }
 }
-
-private data class LanguageOption(val tag: String, val labelRes: Int)
-
-@Composable
-private fun remember_languageOptions(): List<LanguageOption> = listOf(
-    LanguageOption("system", R.string.settings_language_system),
-    LanguageOption("en",     R.string.language_en),
-    LanguageOption("de",     R.string.language_de),
-    LanguageOption("es",     R.string.language_es),
-    LanguageOption("fr",     R.string.language_fr),
-    LanguageOption("hu",     R.string.language_hu),
-    LanguageOption("it",     R.string.language_it),
-    LanguageOption("nl",     R.string.language_nl),
-    LanguageOption("pl",     R.string.language_pl),
-    LanguageOption("sk",     R.string.language_sk),
-    LanguageOption("sl",     R.string.language_sl),
-    LanguageOption("cs",     R.string.language_cs),
-)
 
 @Composable
 private fun ThemeModePill(

@@ -85,19 +85,34 @@ class ForceUploadLocalUrisUseCase @Inject constructor(
             val cloudFileId = existingRow?.cloudFileId
             if (cloudFileId != null) {
                 // Already on Drive, so the upload pipeline never re-runs for it. Record the target
-                // and drain the join here directly: on success drop the pair, on failure leave the
-                // target row so the upload pass's target-table drain retries it. A single linkId per
-                // request keeps the server's per-request link cap satisfied.
+                // and drain the join here directly: once the album holds the photo drop the pair,
+                // otherwise leave the target row so the upload pass's target-table drain retries it.
+                // The add reports an unsent or refused photo in its result, not by throwing, so the
+                // result decides. A single linkId per request keeps the server's per-request link cap
+                // satisfied.
                 if (isAlbumAdd) {
                     uploadAlbumTargetDao.insertIgnore(uri, albumLinkId)
                     runCatching { cloudRepo.addPhotosToAlbum(userId, albumLinkId, listOf(cloudFileId)) }
-                        .onSuccess { uploadAlbumTargetDao.deleteTarget(uri, albumLinkId) }
+                        .onSuccess { result ->
+                            if (cloudFileId in result.succeededLinkIds) uploadAlbumTargetDao.deleteTarget(uri, albumLinkId)
+                        }
                 }
                 continue
             }
-            if (existingRow?.status == SyncStatus.UPLOADING ||
-                existingRow?.status == SyncStatus.HIDDEN
-            ) continue
+            if (existingRow?.status == SyncStatus.HIDDEN) continue
+            if (existingRow?.status == SyncStatus.UPLOADING) {
+                // Already uploading, so it is never seeded again: that would upload it a second time.
+                // An album-add records the target, which the upload in flight joins once it lands (or
+                // the next pass's drain, when it landed before the target was written), and stamps the
+                // intent so an upload that fails is retried as this album-add. A stamp that lands after
+                // the upload finished comes off again, since a backed-up row carries no intent.
+                if (isAlbumAdd) {
+                    uploadAlbumTargetDao.insertIgnore(uri, albumLinkId)
+                    syncStateRepo.markQueued(uri, queueSource, now)
+                    if (syncStateRepo.getByUri(uri)?.cloudFileId != null) syncStateRepo.clearQueuedForSynced(uri)
+                }
+                continue
+            }
             syncStateRepo.upsert(
                 SyncState(
                     localUri = uri,
@@ -123,7 +138,8 @@ class ForceUploadLocalUrisUseCase @Inject constructor(
         // an inline pass dies the moment the user leaves the screen, and never surfaces in the
         // Settings sync list. The worker survives navigation, resumes on app restart, and feeds
         // the same progress events the list observes. allowLowBattery = true because this is an
-        // explicit user action; wifi-only still honours the user's network preference.
+        // explicit user action. Wi-Fi-only does not hold these rows back either: the worker runs on
+        // any connection, and the upload pass lets a MANUAL or ALBUM_ADD row through on mobile data.
         val wifiOnly = context.settingsDataStore.data.first()[SettingsKeys.SYNC_WIFI_ONLY] != false
         eu.akoos.photos.worker.SyncWorker.runNow(context, wifiOnly = wifiOnly, allowLowBattery = true)
         return uris.size

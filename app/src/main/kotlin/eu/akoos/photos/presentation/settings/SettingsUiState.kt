@@ -194,12 +194,14 @@ data class SettingsUiState(
      *  Drive. Separate opt-in from [compressOnUpload]. The on-device original is never modified. Off
      *  by default. */
     val compressVideosOnUpload: Boolean = false,
+    /** When true, Ultra HDR photos are compressed too, which drops their HDR. See [compressOnUpload]. */
+    val compressHdrPhotos: Boolean = false,
     /** Which quality tier the PHOTO upload compression uses when [compressOnUpload] is on. */
     val compressTier: UploadCompressionTier = UploadCompressionTier.BALANCED,
     /** Which quality tier the VIDEO upload compression uses when [compressVideosOnUpload] is on, the
      *  video-only counterpart of [compressTier]. Reuses the same [labelRes] / [descRes] mapping. */
     val compressTierVideo: UploadCompressionTier = UploadCompressionTier.BALANCED,
-    val videoCodec: VideoCodecChoice = VideoCodecChoice.AUTO,
+    val videoCodec: VideoCodecChoice = VideoCodecChoice.AVC,
     /** This device's video encoders, for the codec chips; null until the one-off scan finishes. */
     val encoderCapabilities: EncoderCapabilities? = null,
     val mirrorStripToLocal: Boolean = false,
@@ -224,6 +226,8 @@ data class SettingsUiState(
     val stripShareAuthorship: Boolean = false,
     // App lock
     val appLockEnabled: Boolean = false,
+    /** Whether the optional vault password is set. */
+    val vaultPasswordSet: Boolean = false,
     /** Lock-on-return timeout in seconds. 0 = immediate; common picks: 5 / 10 / 30 / 60 / 300. */
     val appLockTimeoutSeconds: Int = 0,
     /** Privacy opt-in: wipe `cacheDir/fullres/` on every process backgrounding. Off by
@@ -366,14 +370,13 @@ enum class ThemePalette(val storageKey: String, val labelRes: Int) {
 
 /**
  * Top-level gallery tab the app opens on at start. [index] matches the pager page
- * (0 = Photos, 1 = Albums, 2 = Shared) so it maps straight to the saved [SettingsKeys.LANDING_TAB]
+ * (0 = Photos, 1 = Albums) so it maps straight to the saved [SettingsKeys.LANDING_TAB]
  * int and the [androidx.compose.foundation.pager.PagerState] without a lookup table. Labels reuse
  * the existing gallery tab strings.
  */
 enum class LandingTab(val index: Int, val labelRes: Int) {
     Photos(0, eu.akoos.photos.R.string.gallery_tab_photos),
-    Albums(1, eu.akoos.photos.R.string.gallery_tab_albums),
-    Shared(2, eu.akoos.photos.R.string.gallery_tab_shared);
+    Albums(1, eu.akoos.photos.R.string.gallery_tab_albums);
 
     companion object {
         fun fromIndex(index: Int?): LandingTab = entries.firstOrNull { it.index == index } ?: Photos

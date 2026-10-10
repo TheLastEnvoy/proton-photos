@@ -22,14 +22,23 @@
 
 package eu.akoos.photos.presentation.gallery
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -41,6 +50,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -63,6 +73,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.akoos.photos.R
+import eu.akoos.photos.presentation.search.DateSuggestions
+import eu.akoos.photos.presentation.search.RelativeDate
+import eu.akoos.photos.presentation.search.RelativeUnit
+import eu.akoos.photos.presentation.search.applyTo
+import eu.akoos.photos.presentation.util.appLocale
 import eu.akoos.photos.presentation.theme.Accent
 import eu.akoos.photos.presentation.theme.AppColors
 import eu.akoos.photos.presentation.theme.FgDim
@@ -75,7 +90,9 @@ import java.util.Calendar
 
 private val filterChipShape = RoundedCornerShape(10.dp)
 
-@OptIn(ExperimentalMaterial3Api::class)
+private const val CALENDAR_EASE_MS = 240
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun ContentFilterSheet(
     currentFilter: ContentFilter,
@@ -86,6 +103,9 @@ internal fun ContentFilterSheet(
     showCategorySection: Boolean = true,
     showMediaTypeSection: Boolean = true,
     showDateSection: Boolean = true,
+    // Today, last week, 2 weeks ago and the like as one tap each; the search page only, since the timeline's
+    // filter holds no run of days.
+    showRelativeDates: Boolean = false,
     // Signed out there is nothing but on-device media, so the backed-up / cloud chips can only ever
     // return an empty grid; hide the whole sync-status section for a guest.
     showSyncStatusSection: Boolean = true,
@@ -97,7 +117,12 @@ internal fun ContentFilterSheet(
     var month by remember { mutableStateOf(currentFilter.month) }
     var day by remember { mutableStateOf(currentFilter.day) }
     var dayEnd by remember { mutableStateOf(currentFilter.dayEnd) }
+    var dateFrom by remember { mutableStateOf(currentFilter.dateFrom) }
+    var dateTo by remember { mutableStateOf(currentFilter.dateTo) }
     var category by remember { mutableStateOf(currentCategory) }
+    // Where the quick dates are offered the calendar waits behind a button, open from the start only when it
+    // already holds a date.
+    var calendarOpen by remember { mutableStateOf(!showRelativeDates || (currentFilter.year != null && currentFilter.dateFrom == null)) }
 
     fun applyNow(
         mt: MediaType = mediaType,
@@ -106,7 +131,12 @@ internal fun ContentFilterSheet(
         m: Int? = month,
         d: Int? = day,
         de: Int? = dayEnd,
-    ) = onApply(ContentFilter(mediaType = mt, syncStatus = ss, year = y, month = m, day = d, dayEnd = de))
+    ) = onApply(
+        ContentFilter(
+            mediaType = mt, syncStatus = ss, year = y, month = m, day = d, dayEnd = de,
+            dateFrom = dateFrom, dateTo = dateTo,
+        ),
+    )
 
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
     val years = remember { (currentYear downTo currentYear - 10).toList() }
@@ -134,7 +164,7 @@ internal fun ContentFilterSheet(
                 modifier = Modifier.weight(1f),
             )
             val hasActiveFilter = mediaType != MediaType.All || syncStatus != SyncStatusFilter.All ||
-                year != null || category != GalleryFilter.All
+                year != null || dateFrom != null || category != GalleryFilter.All
             if (hasActiveFilter) {
                 Text(
                     text = "✕  ${stringResource(R.string.filter_reset)}",
@@ -143,7 +173,7 @@ internal fun ContentFilterSheet(
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.clickable {
                         mediaType = MediaType.All; syncStatus = SyncStatusFilter.All
-                        year = null; month = null; day = null; dayEnd = null
+                        year = null; month = null; day = null; dayEnd = null; dateFrom = null; dateTo = null
                         category = GalleryFilter.All
                         onCategorySelected(GalleryFilter.All)
                         applyNow(mt = MediaType.All, ss = SyncStatusFilter.All, y = null, m = null, d = null, de = null)
@@ -216,19 +246,74 @@ internal fun ContentFilterSheet(
                 SyncStatusFilter.LocalOnly to stringResource(R.string.filter_sync_local),
                 SyncStatusFilter.BackedUp to stringResource(R.string.filter_sync_backedup),
                 SyncStatusFilter.CloudOnly to stringResource(R.string.filter_sync_cloud),
+                SyncStatusFilter.Offline to stringResource(R.string.filter_offline),
             )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                syncOptions.forEach { (status, label) ->
+            // Two by two, so four labels in any language keep a readable width.
+            syncOptions.chunked(2).forEachIndexed { rowIndex, rowOptions ->
+                if (rowIndex > 0) Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rowOptions.forEach { (status, label) ->
+                        FilterChip(
+                            label = label,
+                            selected = syncStatus == status,
+                            accentWhenSelected = true,
+                            trailingClear = true,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                val newStatus = if (syncStatus == status) SyncStatusFilter.All else status
+                                syncStatus = newStatus
+                                applyNow(ss = newStatus)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Quick dates ──────────────────────────────────────────────────────
+        // The same phrases the search field understands; the lit chip is the one the filter holds, and a
+        // second tap on it clears the date.
+        if (showRelativeDates) {
+            FilterSectionLabel(stringResource(R.string.filter_quick_dates))
+            val locale = appLocale()
+            val today = remember { Calendar.getInstance(locale) }
+            fun titled(text: String) = text.replaceFirstChar { it.titlecase(locale) }
+            val weeksAgo = stringResource(R.string.search_ago_weeks).split('|').first { '#' in it }.replace("#", "2")
+            val quickDates = listOf(
+                titled(stringResource(R.string.search_rel_today).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.Today, today, 1),
+                titled(stringResource(R.string.search_rel_yesterday).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.Yesterday, today, 1),
+                titled(stringResource(R.string.search_rel_this_week).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.ThisWeek, today, 1),
+                titled(stringResource(R.string.search_rel_last_week).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.LastWeek, today, 1),
+                titled(weeksAgo) to DateSuggestions.resolveCounted(RelativeUnit.Week, 2, today, 1),
+                titled(stringResource(R.string.search_rel_this_month).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.ThisMonth, today, 1),
+                titled(stringResource(R.string.search_rel_last_month).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.LastMonth, today, 1),
+                titled(stringResource(R.string.search_rel_this_year).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.ThisYear, today, 1),
+                titled(stringResource(R.string.search_rel_last_year).substringBefore('|')) to
+                    DateSuggestions.resolveRelative(RelativeDate.LastYear, today, 1),
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                quickDates.forEach { (label, term) ->
+                    val asFilter = term.applyTo(ContentFilter())
+                    val selected = asFilter.year == year && asFilter.month == month && asFilter.day == day &&
+                        asFilter.dayEnd == dayEnd && asFilter.dateFrom == dateFrom && asFilter.dateTo == dateTo
                     FilterChip(
                         label = label,
-                        selected = syncStatus == status,
-                        accentWhenSelected = true,
-                        trailingClear = true,
-                        modifier = Modifier.weight(1f),
+                        selected = selected,
                         onClick = {
-                            val newStatus = if (syncStatus == status) SyncStatusFilter.All else status
-                            syncStatus = newStatus
-                            applyNow(ss = newStatus)
+                            val next = if (selected) ContentFilter() else asFilter
+                            year = next.year; month = next.month; day = next.day; dayEnd = next.dayEnd
+                            dateFrom = next.dateFrom; dateTo = next.dateTo
+                            applyNow(y = next.year, m = next.month, d = next.day, de = next.dayEnd)
                         },
                     )
                 }
@@ -236,7 +321,21 @@ internal fun ContentFilterSheet(
         }
 
         // ── Date (calendar — year, optional month, optional day) ───────────────
-        if (showDateSection) {
+        if (showDateSection && showRelativeDates) {
+            FilterChip(
+                label = stringResource(R.string.filter_pick_date),
+                selected = calendarOpen,
+                onClick = { calendarOpen = !calendarOpen },
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { tint -> Icon(Icons.Filled.CalendarMonth, null, tint = tint, modifier = Modifier.size(16.dp)) },
+            )
+        }
+        // The calendar eases open and shut, so the sheet grows with it instead of jumping.
+        AnimatedVisibility(
+            visible = showDateSection && calendarOpen,
+            enter = expandVertically(tween(CALENDAR_EASE_MS)) + fadeIn(tween(CALENDAR_EASE_MS)),
+            exit = shrinkVertically(tween(CALENDAR_EASE_MS)) + fadeOut(tween(CALENDAR_EASE_MS)),
+        ) {
             DateFilterCalendar(
                 year = year,
                 month = month,
@@ -244,7 +343,7 @@ internal fun ContentFilterSheet(
                 dayEnd = dayEnd,
                 years = years,
                 onPick = { y, m, d, de ->
-                    year = y; month = m; day = d; dayEnd = de
+                    year = y; month = m; day = d; dayEnd = de; dateFrom = null; dateTo = null
                     applyNow(y = y, m = m, d = d, de = de)
                 },
             )
@@ -255,44 +354,57 @@ internal fun ContentFilterSheet(
         // categories / folders screen. Search leaves the callback null.
         val openTimelineSettings = onOpenTimelineSettings
         if (openTimelineSettings != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(0.5.dp)
-                    .background(PillBorder),
+            SheetSettingsPageRow(
+                label = stringResource(R.string.timeline_filter_more_settings),
+                onClick = {
+                    onDismiss()
+                    openTimelineSettings()
+                },
             )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onDismiss()
-                        openTimelineSettings()
-                    }
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(
-                    Icons.Filled.Tune,
-                    contentDescription = null,
-                    tint = FgDim,
-                    modifier = Modifier.size(20.dp),
-                )
-                Text(
-                    text = stringResource(R.string.timeline_filter_more_settings),
-                    color = FgPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = FgMute,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
         }
+    }
+}
+
+/**
+ * A drawer's way out to its full settings page: a hairline, then a row with a chevron. Emitted into
+ * the drawer's own column, so the column's spacing sits between the two. The timeline drawer and the
+ * Albums filter sheet share it, so both ways out read the same.
+ */
+@Composable
+internal fun SheetSettingsPageRow(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(0.5.dp)
+            .background(PillBorder),
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            Icons.Filled.Tune,
+            contentDescription = null,
+            tint = FgDim,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = label,
+            color = FgPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = FgMute,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -314,7 +426,7 @@ internal fun FilterChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     leadingIcon: (@Composable (Color) -> Unit)? = null,
-    accentWhenSelected: Boolean = false,
+    accentWhenSelected: Boolean = true,
     trailingClear: Boolean = false,
 ) {
     val colors = AppColors.current

@@ -56,6 +56,12 @@ interface DrivePhotoRepository {
      */
     suspend fun loadAlbumsCached(): List<Album>
 
+    /** Album linkIds holding [photoLinkId] according to the local membership table, no network. */
+    suspend fun getCachedAlbumIdsForPhoto(photoLinkId: String): Set<String>
+
+    /** [loadAlbumsCached] as a stream: emits again whenever the cached album rows change. */
+    fun observeAlbumsCached(): Flow<List<Album>>
+
     /** Cached shared-with-me albums this user has edit rights on, for the add-to-album picker. */
     suspend fun loadSharedAddableAlbumsCached(): List<Album>
 
@@ -468,8 +474,10 @@ interface DrivePhotoRepository {
      * Coil caches, and the per-user DataStore anchors are cleared by the caller (it owns the
      * Context + WorkManager). Leaving the cloud rows behind caused stale photos to reappear with
      * black thumbnails and an occasional 404 on re-login (the events anchor pointed at old state).
+     *
+     * [vault] says how much of the hidden vault goes with it; see [VaultWipe].
      */
-    suspend fun clearCacheForSignOut(userId: UserId)
+    suspend fun clearCacheForSignOut(userId: UserId, vault: VaultWipe = VaultWipe.All)
 
     // ── Lazy thumbnail decrypt ────────────────────────────────────────────
     //

@@ -129,7 +129,7 @@ fun settingsSearchIndex(): List<SettingsSearchEntry> = listOf(
     ),
     SettingsSearchEntry(
         R.string.settings_compress_photos, R.string.settings_metadata,
-        listOf("compress", "compression", "quality", "size", "resolution", "reduce", "shrink", "jpeg", "megapixel", "tömörítés", "minőség", "méret", "felbontás", "kicsinyítés"),
+        listOf("compress", "compression", "quality", "size", "resolution", "reduce", "shrink", "jpeg", "hdr", "ultra hdr", "megapixel", "tömörítés", "minőség", "méret", "felbontás", "kicsinyítés"),
         Screen.BackupProcessing.route,
         cloud = true,
     ),
@@ -163,6 +163,13 @@ fun settingsSearchIndex(): List<SettingsSearchEntry> = listOf(
         Screen.FaceRecognition.route,
     ),
 
+    // ── Labels ─────────────────────────────────────────────────────────────────
+    SettingsSearchEntry(
+        R.string.label_section_title, R.string.settings_more_title,
+        listOf("labels", "label", "rename", "merge", "keywords", "címke", "címkék", "átnevezés"),
+        Screen.LabelsSettings.route,
+    ),
+
     // ── Privacy & security ─────────────────────────────────────────────────────
     SettingsSearchEntry(
         R.string.settings_privacy_security, R.string.settings_title,
@@ -182,18 +189,17 @@ fun settingsSearchIndex(): List<SettingsSearchEntry> = listOf(
     SettingsSearchEntry(
         R.string.settings_strip_share, R.string.settings_privacy_security,
         listOf("metadata", "exif", "strip", "share", "sharing", "location", "gps", "megosztás", "metaadat", "helyadat"),
-        Screen.ShareMetadata.route,
-    ),
-    SettingsSearchEntry(
-        R.string.settings_offline_photos, R.string.settings_privacy_security,
-        listOf("offline", "download", "available offline", "pinned", "letöltés"),
-        Screen.Offline.route,
-        cloud = true,
+        Screen.PrivacySecuritySettings.route,
     ),
     SettingsSearchEntry(
         R.string.settings_hidden_photos, R.string.settings_privacy_security,
         listOf("hidden", "hide", "vault", "private", "secret", "conceal", "rejtett", "széf", "titkos", "elrejtés"),
         Screen.HiddenAlbum.route,
+    ),
+    SettingsSearchEntry(
+        R.string.settings_vault_password, R.string.settings_privacy_security,
+        listOf("vault", "password", "zip", "hidden", "forced logout", "jelszó", "széf", "titkosított"),
+        Screen.PrivacySecuritySettings.route,
     ),
     SettingsSearchEntry(
         R.string.permissions_title, R.string.settings_privacy_security,
@@ -219,13 +225,18 @@ fun settingsSearchIndex(): List<SettingsSearchEntry> = listOf(
     ),
     SettingsSearchEntry(
         R.string.language_section, R.string.settings_appearance,
-        listOf("language", "locale", "nyelv"),
+        listOf("language", "locale", "nyelv", "dil"),
         Screen.LanguageSettings.route,
     ),
     SettingsSearchEntry(
         R.string.settings_timeline, R.string.settings_appearance,
         listOf("timeline", "layout", "grid", "categories", "idővonal"),
         Screen.TimelineFilter.route,
+    ),
+    SettingsSearchEntry(
+        R.string.gallery_tab_albums, R.string.settings_appearance,
+        listOf("albums", "cover size", "columns", "collection", "default filter", "albumok", "borító"),
+        Screen.AlbumsSettings.route,
     ),
 
     // ── Help & about ───────────────────────────────────────────────────────────

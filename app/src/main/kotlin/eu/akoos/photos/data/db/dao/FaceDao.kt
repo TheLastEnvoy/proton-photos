@@ -84,6 +84,105 @@ data class UnclusteredFace(
     }
 }
 
+/**
+ * One face reduced to what a face snapshot export plans with: its photo, the person it is grouped under,
+ * the name confirmed for it, whether it was removed, and the byte length of its embedding. The blob
+ * itself is left unread, so planning an export over a whole library never loads a recognition vector.
+ */
+data class FaceHead(
+    val id: String,
+    val photoKey: String,
+    val personId: Long?,
+    val manualName: String?,
+    val rejected: Boolean,
+    val embeddingBytes: Int,
+)
+
+/**
+ * One face reduced to its photo, its stored box, its detection [score] and the person it is grouped
+ * under ([personId], null while it waits to be clustered). The embedding blob is left out, so listing
+ * the faces across a selection of photos never loads the recognition vectors.
+ */
+data class FaceOnPhoto(
+    val id: String,
+    val photoKey: String,
+    val personId: Long?,
+    val boxLeft: Float,
+    val boxTop: Float,
+    val boxRight: Float,
+    val boxBottom: Float,
+    val score: Float,
+)
+
+/**
+ * One face reduced to its stored box and its curation: the person it is grouped under ([personId]), the
+ * name confirmed for it ([manualName]) and whether it was removed ([rejected]). The embedding blob is left
+ * out, so pairing two face sets of one photo never loads a recognition vector.
+ */
+data class CuratedFace(
+    val id: String,
+    val personId: Long?,
+    val boxLeft: Float,
+    val boxTop: Float,
+    val boxRight: Float,
+    val boxBottom: Float,
+    val rejected: Boolean,
+    val manualName: String?,
+)
+
+/**
+ * One kept face reduced to what a full regroup reads: its [embedding], the three quality signals the
+ * confident-versus-weak grading reads ([score], [blur], [landmarks]), the person it is grouped under, the
+ * name confirmed for it, and its photo (for each person's photo count and cover). The box and owner
+ * columns are left out. Not a data class: nothing compares these, and the blob has no content equality.
+ */
+class RegroupFaceRow(
+    val id: String,
+    val photoKey: String,
+    val personId: Long?,
+    val manualName: String?,
+    val score: Float,
+    val blur: Float?,
+    val landmarks: String,
+    val embedding: ByteArray,
+)
+
+/** One face's id and recognition vector, the read a single person's centroid is summed from. */
+class FaceVector(val id: String, val embedding: ByteArray)
+
+/** How many kept faces one person holds. */
+data class PersonFaceCount(val personId: Long, val faces: Int)
+
+/** One kept face's id and the person it is grouped under, with no vector. */
+data class FacePersonLink(val id: String, val personId: Long)
+
+/** One face reduced to its photo and its stored box: no curation, no vector. */
+data class FaceBoxRow(
+    val id: String,
+    val photoKey: String,
+    val boxLeft: Float,
+    val boxTop: Float,
+    val boxRight: Float,
+    val boxBottom: Float,
+)
+
+/**
+ * One face that may carry a name, reduced to its box, the person it is grouped under, the name confirmed
+ * for it and its detection [score] (the order names are captured in). No vector. Not a data class:
+ * nothing compares these rows.
+ */
+class FaceLabelRow(
+    val id: String,
+    val photoKey: String,
+    val boxLeft: Float,
+    val boxTop: Float,
+    val boxRight: Float,
+    val boxBottom: Float,
+    val personId: Long?,
+    val manualName: String?,
+    val score: Float,
+)
+
 @Dao
 interface FaceDao {
 
@@ -116,6 +215,37 @@ interface FaceDao {
             "AND rejected = 0 AND personId IS NOT NULL ORDER BY score DESC",
     )
     suspend fun groupedFacesForPhoto(userId: String, photoKey: String): List<FaceEntity>
+
+    /** Every kept face on the given photos, grouped or not (an ungrouped face has a null personId), so
+     *  adding photos to a person can offer the faces clustering has not placed yet. Clearest first within
+     *  each photo, without the embedding blob. Chunked for the SQL host-variable limit. */
+    suspend fun facesOnPhotos(userId: String, photoKeys: Collection<String>): List<FaceOnPhoto> {
+        val out = ArrayList<FaceOnPhoto>()
+        photoKeys.toSet().forEachSqlChunk { out += facesOnPhotosChunk(userId, it) }
+        return out
+    }
+
+    @Query(
+        "SELECT id, photoKey, personId, `left` AS boxLeft, `top` AS boxTop, `right` AS boxRight, " +
+            "`bottom` AS boxBottom, score FROM face WHERE userId = :userId AND photoKey IN (:photoKeys) " +
+            "AND rejected = 0 ORDER BY photoKey, score DESC",
+    )
+    suspend fun facesOnPhotosChunk(userId: String, photoKeys: List<String>): List<FaceOnPhoto>
+
+    /** The account's faces among the given ids with their current person, so an assignment writes only
+     *  this account's faces and knows which people it takes them from. Removed faces are included, since
+     *  assigning one brings it back. Chunked for the SQL host-variable limit. */
+    suspend fun facesByIds(userId: String, faceIds: Collection<String>): List<FaceOnPhoto> {
+        val out = ArrayList<FaceOnPhoto>()
+        faceIds.toSet().forEachSqlChunk { out += facesByIdsChunk(userId, it) }
+        return out
+    }
+
+    @Query(
+        "SELECT id, photoKey, personId, `left` AS boxLeft, `top` AS boxTop, `right` AS boxRight, " +
+            "`bottom` AS boxBottom, score FROM face WHERE userId = :userId AND id IN (:faceIds)",
+    )
+    suspend fun facesByIdsChunk(userId: String, faceIds: List<String>): List<FaceOnPhoto>
 
     /** Every face assigned to one person (not removed), so a caller can build the person's mean face
      *  (centroid) to match candidates against in a "find more photos" sweep. */
@@ -281,10 +411,93 @@ interface FaceDao {
     @Query("SELECT * FROM face WHERE userId = :userId ORDER BY score DESC, id LIMIT :limit OFFSET :offset")
     suspend fun facesByScoreDesc(userId: String, limit: Int, offset: Int): List<FaceEntity>
 
-    /** Every face for the account, clearest detection first, the batch clustering pass's input. The
-     *  merge step needs all the embeddings at once, so the pass loads them together. */
+    /** Every face for the account as whole rows, clearest detection first. Holds every blob at once, so
+     *  the face passes read lean pages instead ([regroupFacesAfter], [keptPersonLinksByScoreDesc],
+     *  [labelRowsAfter]), each reproducing this order where it matters. */
     @Query("SELECT * FROM face WHERE userId = :userId ORDER BY score DESC, id")
     suspend fun allFacesByScoreDesc(userId: String): List<FaceEntity>
+
+    /**
+     * The account's next [limit] kept faces after [afterId] in id order, reduced to [RegroupFaceRow], the
+     * full regroup's paged read: each page resumes from the last id seen along the primary key, as
+     * [facesAfter] does, so the whole library's blobs are never held at once. Removed faces are left out,
+     * since no grouping places them. Start from an empty [afterId].
+     */
+    @Query(
+        "SELECT id, photoKey, personId, manualName, score, blur, landmarks, embedding FROM face " +
+            "WHERE +userId = :userId AND rejected = 0 AND id > :afterId ORDER BY id LIMIT :limit",
+    )
+    suspend fun regroupFacesAfter(userId: String, afterId: String, limit: Int): List<RegroupFaceRow>
+
+    /** One person's next [limit] kept faces after [afterId] in id order, id and vector only, so a single
+     *  person's centroid is summed a page at a time. Start from an empty [afterId]. */
+    @Query(
+        "SELECT id, embedding FROM face WHERE userId = :userId AND personId = :personId AND rejected = 0 " +
+            "AND id > :afterId ORDER BY id LIMIT :limit",
+    )
+    suspend fun personVectorsAfter(userId: String, personId: Long, afterId: String, limit: Int): List<FaceVector>
+
+    /** How many kept faces each of the account's people holds, one row per person and no vector read, so
+     *  a cached centroid can be checked against the faces it should summarise. */
+    @Query(
+        "SELECT personId, COUNT(*) AS faces FROM face WHERE userId = :userId AND personId IS NOT NULL " +
+            "AND rejected = 0 GROUP BY personId",
+    )
+    suspend fun keptFaceCountsByPerson(userId: String): List<PersonFaceCount>
+
+    /** Every kept, grouped face of the account as its id and person, in [allFacesByScoreDesc]'s order
+     *  (clearest detection first, then id), with no vector read: the vectors follow by id. */
+    @Query(
+        "SELECT id, personId FROM face WHERE userId = :userId AND rejected = 0 AND personId IS NOT NULL " +
+            "ORDER BY score DESC, id",
+    )
+    suspend fun keptPersonLinksByScoreDesc(userId: String): List<FacePersonLink>
+
+    /** The account's faces among [faceIds] as id and vector, in no set order. One slice: the caller keeps
+     *  [faceIds] within the host-variable limit. */
+    @Query("SELECT id, embedding FROM face WHERE userId = :userId AND id IN (:faceIds)")
+    suspend fun vectorsByIdsChunk(userId: String, faceIds: List<String>): List<FaceVector>
+
+    /**
+     * The account's next [limit] faces after [afterId] in id order that are grouped or carry a confirmed
+     * name, removed ones included, reduced to [FaceLabelRow]: the name capture's paged read, a walk along
+     * the primary key as [facesAfter] is. Start from an empty [afterId].
+     */
+    @Query(
+        "SELECT id, photoKey, `left` AS boxLeft, `top` AS boxTop, `right` AS boxRight, `bottom` AS boxBottom, " +
+            "personId, manualName, score FROM face WHERE +userId = :userId AND id > :afterId " +
+            "AND (personId IS NOT NULL OR manualName IS NOT NULL) ORDER BY id LIMIT :limit",
+    )
+    suspend fun labelRowsAfter(userId: String, afterId: String, limit: Int): List<FaceLabelRow>
+
+    /** Every face of the account on the given photos, removed ones included, as its box. One slice: the
+     *  caller keeps [photoKeys] within the host-variable limit. */
+    @Query(
+        "SELECT id, photoKey, `left` AS boxLeft, `top` AS boxTop, `right` AS boxRight, `bottom` AS boxBottom " +
+            "FROM face WHERE userId = :userId AND photoKey IN (:photoKeys)",
+    )
+    suspend fun faceBoxesOnPhotosChunk(userId: String, photoKeys: List<String>): List<FaceBoxRow>
+
+    /** The photo of each of the account's faces among [faceIds]. One slice, as [faceBoxesOnPhotosChunk]. */
+    @Query("SELECT photoKey FROM face WHERE userId = :userId AND id IN (:faceIds)")
+    suspend fun photoKeysOfFacesChunk(userId: String, faceIds: List<String>): List<String>
+
+    /**
+     * The account's next [limit] faces after [afterId] in id order, whole rows, the face snapshot export's
+     * read: an id (`photoKey#index`) keeps each photo's faces together, and a page resumes from the last
+     * id seen, so every page is one walk along the primary key rather than a re-sort of the table the
+     * way an OFFSET page is. The unary plus keeps the planner off the userId index, which would sort
+     * every row of the account (blobs included) for each page. Start from an empty [afterId].
+     */
+    @Query("SELECT * FROM face WHERE +userId = :userId AND id > :afterId ORDER BY id LIMIT :limit")
+    suspend fun facesAfter(userId: String, afterId: String, limit: Int): List<FaceEntity>
+
+    /** [facesAfter] reduced to [FaceHead], the export's planning pass, with no embedding read. */
+    @Query(
+        "SELECT id, photoKey, personId, manualName, rejected, length(embedding) AS embeddingBytes " +
+            "FROM face WHERE +userId = :userId AND id > :afterId ORDER BY id LIMIT :limit",
+    )
+    suspend fun faceHeadsAfter(userId: String, afterId: String, limit: Int): List<FaceHead>
 
     /**
      * Places a whole cluster of faces into one person in as few statements as possible, the recluster
@@ -361,6 +574,19 @@ interface FaceDao {
      *  so its faces (id is `photoKey#index`) reuse the cloud identity instead of a duplicate re-scan. */
     @Query("UPDATE face SET id = :newKey || substr(id, length(:oldKey) + 1), photoKey = :newKey WHERE userId = :userId AND photoKey = :oldKey")
     suspend fun rekeyPhoto(userId: String, oldKey: String, newKey: String)
+
+    /** Every face on one photo, removed ones included, with its box and curation, so a backup re-key can
+     *  pair the device copy's faces with the cloud copy's when both were scanned. */
+    @Query(
+        "SELECT id, personId, `left` AS boxLeft, `top` AS boxTop, `right` AS boxRight, `bottom` AS boxBottom, " +
+            "rejected, manualName FROM face WHERE userId = :userId AND photoKey = :photoKey ORDER BY id",
+    )
+    suspend fun curatedFacesOnPhoto(userId: String, photoKey: String): List<CuratedFace>
+
+    /** Moves one face to [newId] on [photoKey], its person, confirmation and removal kept, so a backup
+     *  re-key can bring a device face the cloud copy lacks under the cloud key. */
+    @Query("UPDATE face SET id = :newId, photoKey = :photoKey WHERE userId = :userId AND id = :oldId")
+    suspend fun moveFace(userId: String, oldId: String, newId: String, photoKey: String)
 
     /** Removes every face for every account, the recognition-model re-index wipe: a model change
      *  invalidates all stored embeddings regardless of which account produced them. Returns the row

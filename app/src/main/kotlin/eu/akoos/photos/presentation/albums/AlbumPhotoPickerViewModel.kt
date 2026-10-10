@@ -28,14 +28,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -43,10 +47,9 @@ import kotlinx.coroutines.launch
 import me.proton.core.accountmanager.domain.AccountManager
 import eu.akoos.photos.R
 import eu.akoos.photos.data.db.dao.AlbumPhotoMembershipDao
+import eu.akoos.photos.data.repository.SyncStateSnapshot
 import eu.akoos.photos.domain.entity.GalleryItem
-import eu.akoos.photos.domain.entity.SyncStatus
 import eu.akoos.photos.domain.repository.DrivePhotoRepository
-import eu.akoos.photos.domain.repository.SyncStateRepository
 import eu.akoos.photos.domain.usecase.ForceUploadLocalUrisUseCase
 import eu.akoos.photos.domain.usecase.GetGalleryItemsUseCase
 import eu.akoos.photos.util.retryOnDbTear
@@ -74,11 +77,12 @@ class AlbumPhotoPickerViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val accountManager: AccountManager,
     private val getGalleryItems: GetGalleryItemsUseCase,
-    private val syncStateRepo: SyncStateRepository,
+    private val syncStateSnapshot: SyncStateSnapshot,
     private val driveRepo: DrivePhotoRepository,
     private val forceUploadLocalUris: ForceUploadLocalUrisUseCase,
     private val albumPhotoMembershipDao: AlbumPhotoMembershipDao,
     private val albumListEvents: eu.akoos.photos.util.AlbumListEventBus,
+    private val albumBrowseSource: AlbumBrowseSource,
 ) : ViewModel() {
 
     @Volatile private var primaryUserId: me.proton.core.domain.entity.UserId? = null
@@ -87,33 +91,31 @@ class AlbumPhotoPickerViewModel @Inject constructor(
         viewModelScope.launch { accountManager.getPrimaryUserId().collect { primaryUserId = it } }
     }
 
-    /** The full merged library, shared with the timeline so the picker adds no extra DB work. */
+    /** The full merged library, shared with the timeline so the picker adds no extra DB work. Null until
+     *  the library's first emission, so a load in progress never reads as an empty library. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val items: StateFlow<List<GalleryItem>> = accountManager.getPrimaryUserId()
+    private val items: StateFlow<List<GalleryItem>?> = accountManager.getPrimaryUserId()
         .flatMapLatest { userId ->
             if (userId == null) getGalleryItems.invokeLocalOnly() else getGalleryItems.invoke(userId)
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** Cloud linkIds of photos hidden on this device — dropped from the picker so a hidden photo
      *  can't leak back into an album (which would un-hide it). */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val hiddenCloudLinkIds: StateFlow<Set<String>> = accountManager.getPrimaryUserId()
+    private val hiddenCloudLinkIds: StateFlow<Set<String>> = accountManager.getPrimaryUserId()
         .flatMapLatest { userId ->
             if (userId == null) flowOf(emptySet())
-            else syncStateRepo.observeAll(userId).map { states ->
-                states.filter { it.status == SyncStatus.HIDDEN && it.cloudFileId != null }
-                    .mapNotNull { it.cloudFileId }
-                    .toSet()
-            }
+            else syncStateSnapshot.observe(userId).map { it.hiddenCloudIds }
         }
+        .flowOn(Dispatchers.Default)
         .retryOnDbTear("PickerHiddenIds")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     /** Cloud linkIds held by ANY album — backs the picker's unfiled-only filter. The membership
      *  cross-table is written in bursts when the Albums tab prefetches; a read landing mid-burst
      *  degrades to "nothing is filed" rather than tearing the picker down. */
-    val inAnyAlbumLinkIds: StateFlow<Set<String>> = albumPhotoMembershipDao
+    private val inAnyAlbumLinkIds: StateFlow<Set<String>> = albumPhotoMembershipDao
         .observeAllAssociatedPhotoLinkIds()
         .map { it.toSet() }
         .catch {
@@ -121,6 +123,40 @@ class AlbumPhotoPickerViewModel @Inject constructor(
             emit(emptySet())
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** The albums and device folders of the Albums tab, in its order, for the picker's Albums view. */
+    internal val browseSource: StateFlow<eu.akoos.photos.presentation.search.SearchAlbums.Source> =
+        albumBrowseSource.source.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            eu.akoos.photos.presentation.search.SearchAlbums.Source(),
+        )
+
+    /** The cloud ids of the photos album [albumLinkId] holds, read from the local membership table. */
+    fun albumMembers(albumLinkId: String): kotlinx.coroutines.flow.Flow<Set<String>> =
+        albumPhotoMembershipDao.observeAssociatedPhotoLinkIdsForAlbums(setOf(albumLinkId))
+            .map { it.toSet() }
+            .catch { emit(emptySet()) }
+
+    private val query = MutableStateFlow<PickerQuery?>(null)
+
+    /** What the grid is narrowed and sectioned by. The content waits for the first one, so a screen
+     *  opened in a narrowed mode never shows the unfiltered library first. */
+    fun setQuery(value: PickerQuery) {
+        query.value = value
+    }
+
+    /** The prepared grid: null while the library or the first query is still loading, then the
+     *  filtered, sectioned photos (possibly empty). Rebuilt on [Dispatchers.Default] whenever the
+     *  library, the hidden set, the album memberships or the query change. */
+    val content: StateFlow<PickerContent?> = combine(
+        items.filterNotNull(),
+        hiddenCloudLinkIds,
+        inAnyAlbumLinkIds,
+        query.filterNotNull(),
+    ) { all, hidden, filed, q -> AlbumPickerContent.build(all, q, hidden, filed) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val _selected = MutableStateFlow<Set<String>>(emptySet())
     /** Stable per-item keys of the picked photos (cloud linkId, else local uri). */
@@ -141,6 +177,13 @@ class AlbumPhotoPickerViewModel @Inject constructor(
 
     fun resetAddState() = _addState.update { PickerAddState.Idle }
 
+    /** The picked photos in library order, drawn from the whole library rather than the filtered grid. */
+    fun selectedItems(): List<GalleryItem> {
+        val keys = _selected.value
+        if (keys.isEmpty()) return emptyList()
+        return items.value.orEmpty().filter { stableKeyOf(it) in keys }
+    }
+
     fun requestThumbnailDecrypt(linkId: String) {
         val userId = primaryUserId ?: return
         driveRepo.requestThumbnailDecrypt(userId, linkId)
@@ -156,7 +199,7 @@ class AlbumPhotoPickerViewModel @Inject constructor(
     fun addSelectedToAlbum(albumLinkId: String) {
         val keys = _selected.value
         if (keys.isEmpty() || albumLinkId.isBlank()) return
-        val picked = items.value.filter { stableKeyOf(it) in keys }
+        val picked = selectedItems()
         if (picked.isEmpty()) return
         viewModelScope.launch {
             _addState.update { PickerAddState.Working }

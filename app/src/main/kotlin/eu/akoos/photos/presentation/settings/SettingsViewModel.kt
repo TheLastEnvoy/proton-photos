@@ -25,7 +25,6 @@
 package eu.akoos.photos.presentation.settings
 
 import android.content.Context
-import android.net.Uri
 import android.os.Environment
 import android.os.StatFs
 import androidx.appcompat.app.AppCompatDelegate
@@ -36,9 +35,11 @@ import androidx.work.WorkManager
 import coil.imageLoader
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,6 +54,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
@@ -68,6 +70,7 @@ import eu.akoos.photos.data.db.dao.PersonDao
 import eu.akoos.photos.data.db.dao.NotPersonDao
 import eu.akoos.photos.data.db.dao.PersonCoverDao
 import eu.akoos.photos.data.db.dao.PersonManualPhotoDao
+import eu.akoos.photos.data.db.dao.PhotoListingDao
 import eu.akoos.photos.data.db.entity.PhotoLocationEntity
 import eu.akoos.photos.data.face.FaceEmbeddingModelManager
 import eu.akoos.photos.data.face.FaceModelAssets
@@ -76,6 +79,8 @@ import eu.akoos.photos.data.face.FaceIndexingScheduler
 import eu.akoos.photos.data.face.FaceIndexingState
 import eu.akoos.photos.data.face.FaceModelManager
 import eu.akoos.photos.data.face.FaceModelPreparation
+import eu.akoos.photos.data.mlsync.MlSyncFacePause
+import eu.akoos.photos.data.mlsync.MlSyncSignOut
 import eu.akoos.photos.data.ocr.OcrModelComponent
 import eu.akoos.photos.data.ocr.OcrModelManager
 import eu.akoos.photos.data.ocr.OcrModelOutcome
@@ -101,8 +106,9 @@ import eu.akoos.photos.data.preferences.settingsDataStore
 import eu.akoos.photos.data.preferences.syncEffectivelyEnabled
 import eu.akoos.photos.data.upload.compression.VideoEncoderCapabilities
 import eu.akoos.photos.presentation.lock.AppLockManager
+import eu.akoos.photos.presentation.lock.AppLockSettings
+import eu.akoos.photos.presentation.lock.appLockChangeNeedsAuth
 import eu.akoos.photos.service.ScreenshotOverlayService
-import eu.akoos.photos.domain.entity.SyncStatus
 import eu.akoos.photos.domain.entity.UploadCompressionTier
 import eu.akoos.photos.domain.entity.compression.VideoCodecChoice
 import kotlinx.coroutines.flow.combine
@@ -111,10 +117,6 @@ import eu.akoos.photos.domain.repository.LocalMediaRepository
 import eu.akoos.photos.domain.repository.NewsRepository
 import eu.akoos.photos.domain.repository.SyncStateRepository
 import eu.akoos.photos.domain.model.PersonSummary
-import eu.akoos.photos.domain.usecase.ClusterFacesUseCase
-import eu.akoos.photos.domain.usecase.ExportFaceIndexUseCase
-import eu.akoos.photos.domain.usecase.FaceIndexImportOutcome
-import eu.akoos.photos.domain.usecase.ImportFaceIndexUseCase
 import eu.akoos.photos.domain.usecase.FreeUpSpaceUseCase
 import eu.akoos.photos.domain.usecase.GetGalleryItemsUseCase
 import eu.akoos.photos.domain.usecase.ObservePeopleUseCase
@@ -129,6 +131,7 @@ import eu.akoos.photos.util.NetworkObserver
 import eu.akoos.photos.util.HealthBlockReason
 import eu.akoos.photos.util.heavyMlBlockReason
 import eu.akoos.photos.util.retryOnDbTear
+import eu.akoos.photos.widget.PhotoWidgetUpdateWorker
 import eu.akoos.photos.worker.FreeUpSpaceWorker
 import eu.akoos.photos.worker.SyncWorker
 import javax.inject.Inject
@@ -147,6 +150,16 @@ data class FaceIndexingUi(
     val actionEnabled: Boolean,
 )
 
+/**
+ * Whether face scanning reads as paused, with the Resume action on the face card and "Paused" on the
+ * machine-learning page's face row: whenever the pause switch is on ([pauseSwitchOn]), whoever turned it on
+ * (the Pause button, the notification's Stop, or a restore from Drive), and whenever the scheduler reports its
+ * walk paused ([state]), however few photos are left. A walk that stopped at the switch reports 0 of 0 photos,
+ * which the bulk-scan controls alone never show, so a paused scan always has its way back here.
+ */
+internal fun faceScanPausedRow(pauseSwitchOn: Boolean, state: FaceIndexingState): Boolean =
+    pauseSwitchOn || state == FaceIndexingState.Paused
+
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -162,10 +175,12 @@ class SettingsViewModel @Inject constructor(
     private val appLockManager: AppLockManager,
     private val localMediaRepo: LocalMediaRepository,
     private val cloudRepo: DrivePhotoRepository,
+    private val photoListingDao: PhotoListingDao,
     private val cloudTrashService: eu.akoos.photos.data.repository.drive.CloudTrashService,
     private val offlineStore: OfflineStorageManager,
     private val hiddenStorage: eu.akoos.photos.data.hidden.HiddenStorageManager,
     private val hiddenVaultJournal: HiddenVaultJournal,
+    private val hiddenVaultRestorer: eu.akoos.photos.data.hidden.HiddenVaultRestorer,
     private val faceIndexingScheduler: FaceIndexingScheduler,
     private val deviceHealth: DeviceHealthPolicy,
     private val personDao: PersonDao,
@@ -175,9 +190,6 @@ class SettingsViewModel @Inject constructor(
     private val personManualPhotoDao: PersonManualPhotoDao,
     private val notPersonDao: NotPersonDao,
     private val personCoverDao: PersonCoverDao,
-    private val clusterFacesUseCase: ClusterFacesUseCase,
-    private val exportFaceIndexUseCase: ExportFaceIndexUseCase,
-    private val importFaceIndexUseCase: ImportFaceIndexUseCase,
     private val observePeopleUseCase: ObservePeopleUseCase,
     private val getGalleryItems: GetGalleryItemsUseCase,
     private val newsRepository: NewsRepository,
@@ -185,6 +197,7 @@ class SettingsViewModel @Inject constructor(
     private val semanticIndexingScheduler: SemanticIndexingScheduler,
     private val modelDownloadState: ModelDownloadState,
     private val mlWalkGate: MlWalkGate,
+    private val mlSyncSignOut: MlSyncSignOut,
     private val videoEncoderCapabilities: VideoEncoderCapabilities,
 ) : ViewModel() {
 
@@ -302,6 +315,14 @@ class SettingsViewModel @Inject constructor(
             SharingStarted.WhileSubscribed(5_000L),
             FaceIndexingUi(FaceIndexingState.Idle, 0, 0, HealthBlockReason.NONE, actionEnabled = true),
         )
+
+    /** Whether the face scan's pause switch is on, read from the store itself: the scheduler reports Paused
+     *  only once a walk in this process has stopped at the switch ([faceScanPausedRow]). */
+    val faceIndexingPaused: StateFlow<Boolean> = context.settingsDataStore.data
+        .map { it[SettingsKeys.FACE_INDEXING_PAUSED] == true }
+        .catch { emit(false) }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), false)
 
     /** How many people the face clustering has grouped for the active account, or for the guest's
      *  local partition when signed out. Re-resolves on an account switch so the panel never carries
@@ -825,36 +846,26 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * Observes counts shown in the Sync card.
+     * Observes counts shown in the Sync card, each read as a number in SQL, never as the rows.
      *
-     * - **Backed up** = total photos that live on Proton Drive. Sourced from the cloud-photo
-     *   listing directly (Room Flow), so the number reacts immediately when a fresh upload
-     *   lands or when the user deletes a cloud photo / removes a Drive-only album. The previous
-     *   implementation counted only SyncState rows in SYNCED status — that misses photos that
-     *   exist purely in the cloud (no on-device twin), and never updates after device deletes.
+     * - **Backed up** = the photos and videos of the user's own stream on Proton Drive and their
+     *   total size, over exactly the rows the timeline lists. Cloud-only photos count, the figures
+     *   follow an upload or a cloud delete, and device-side cleanup (Free up space) leaves them be.
      *
      * - **Pending** = on-device photos that are LOCAL_ONLY AND carry a queued upload intent in
      *   SyncState (i.e. genuinely waiting to upload), the same set the upload processor selects.
-     *
-     * - **Backed-up bytes** = sum of cloud-photo sizes. Cleaner than the SyncState sum because
-     *   it survives device-side cleanup (Free up space).
      */
     private fun observeBackedUpBytes() {
         viewModelScope.launch {
             accountManager.getPrimaryUserId().collectLatest { userId ->
                 if (userId == null) return@collectLatest
                 combine(
-                    cloudRepo.observeCloudPhotos(userId),
-                    syncStateRepo.observeAll(userId),
-                ) { cloudPhotos, syncStates ->
-                    val backedUpVideos = cloudPhotos.count { it.mimeType.startsWith("video/") }
-                    val backedUpPhotos = cloudPhotos.size - backedUpVideos
-                    val backedUpBytes = cloudPhotos.sumOf { it.sizeBytes }
-                    // Only rows that are LOCAL_ONLY AND queued are genuinely waiting to back up, the
-                    // same set the upload processor and the Activity screen use. A LOCAL_ONLY row with
-                    // no queue intent (an out-of-scope local file) must not inflate the pending count.
-                    val pendingCount  = syncStates.count { it.status == SyncStatus.LOCAL_ONLY && it.queued }
-                    BackedUpSnapshot(backedUpPhotos, backedUpVideos, backedUpBytes, pendingCount)
+                    // Each read of the totals passes over the whole listing, and thumbnail, upload and
+                    // backfill writes can land on the table several times a second, so it is paced.
+                    photoListingDao.observeOwnStreamTotals(userId.id).pacedBy(BACKUP_TOTALS_MIN_INTERVAL_MS),
+                    syncStateRepo.countPendingUploads(userId),
+                ) { totals, pendingCount ->
+                    BackedUpSnapshot(totals.photos, totals.videos, totals.bytes, pendingCount)
                 }
                     .retryOnDbTear("SettingsBackedUp")
                     .collectLatest { snap ->
@@ -878,8 +889,8 @@ class SettingsViewModel @Inject constructor(
     private fun observeTrashedCount() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             viewModelScope.launch {
-                localMediaRepo.observeTrashedMedia().collectLatest { items ->
-                    _uiState.update { it.copy(trashedCount = items.size) }
+                localMediaRepo.countTrashedMedia().collectLatest { count ->
+                    _uiState.update { it.copy(trashedCount = count) }
                 }
             }
         }
@@ -977,6 +988,7 @@ class SettingsViewModel @Inject constructor(
                     stripOnUpload = migratedPrefs[SettingsKeys.STRIP_ON_UPLOAD] ?: false,
                     compressOnUpload = migratedPrefs[SettingsKeys.COMPRESS_ON_UPLOAD] ?: false,
                     compressVideosOnUpload = migratedPrefs[SettingsKeys.COMPRESS_VIDEO_ON_UPLOAD] ?: false,
+                    compressHdrPhotos = migratedPrefs[SettingsKeys.COMPRESS_HDR_PHOTOS] ?: false,
                     compressTier = UploadCompressionTier.fromOrdinalOrDefault(
                         migratedPrefs[SettingsKeys.COMPRESS_UPLOAD_TIER] ?: UploadCompressionTier.BALANCED.ordinal
                     ),
@@ -999,6 +1011,7 @@ class SettingsViewModel @Inject constructor(
                     stripShareSoftwareInfo = migratedPrefs[SettingsKeys.STRIP_SHARE_SOFTWARE_INFO] ?: false,
                     stripShareAuthorship = migratedPrefs[SettingsKeys.STRIP_SHARE_AUTHORSHIP] ?: false,
                     appLockEnabled = migratedPrefs[SettingsKeys.APP_LOCK_ENABLED] ?: false,
+                    vaultPasswordSet = migratedPrefs[SettingsKeys.VAULT_PASSWORD_BLOB] != null,
                     appLockTimeoutSeconds = migratedPrefs[SettingsKeys.APP_LOCK_TIMEOUT_SECONDS]
                         ?: migratedPrefs[SettingsKeys.APP_LOCK_TIMEOUT_MINUTES]?.let { it * 60 } ?: 0,
                     clearCacheOnAppClose = migratedPrefs[SettingsKeys.CLEAR_CACHE_ON_APP_CLOSE] ?: false,
@@ -1627,6 +1640,18 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
+     * Resume the face scan from the face card's paused row, whoever paused it. Lifts the switch together with
+     * any hold a restore from Drive kept on it, then starts a walk for the signed-in account (the guest's local
+     * partition when signed out), even in a process where no walk has run yet that an unpause could restart.
+     */
+    fun resumeFaceIndexing() {
+        viewModelScope.launch {
+            MlSyncFacePause.lift(context)
+            faceIndexingScheduler.requestIndex(accountManager.getPrimaryUserId().first())
+        }
+    }
+
+    /**
      * Resume the face scan when the recognition screen opens, so a walk the OS killed (app swiped from
      * Recents) continues without waiting for a pull-to-refresh. Routes through the paused-respecting
      * [DrivePhotoRepository.backfillFaces] -> indexAll, which bails while the user's pause is set, so it
@@ -1741,99 +1766,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private val _faceTransferMsg = MutableStateFlow<String?>(null)
-    val faceTransferMsg: StateFlow<String?> = _faceTransferMsg.asStateFlow()
-
-    fun clearFaceTransferMsg() { _faceTransferMsg.value = null }
-
-    /** The document a successful export was just written to, surfaced so the screen can offer to send it
-     *  on through the system share sheet (another app or a nearby device) right after the save. Null
-     *  until an export succeeds; cleared once the share prompt is answered. */
-    private val _faceExportedUri = MutableStateFlow<Uri?>(null)
-    val faceExportedUri: StateFlow<Uri?> = _faceExportedUri.asStateFlow()
-
-    fun clearFaceExportedUri() { _faceExportedUri.value = null }
-
-    /** True while an export or import runs, so the transfer rows read as busy and cannot be tapped
-     *  again mid-run. */
-    private val _faceTransferInProgress = MutableStateFlow(false)
-    val faceTransferInProgress: StateFlow<Boolean> = _faceTransferInProgress.asStateFlow()
-
-    /** Write the account's portable face index to [uri] (a document the user just chose). Reports the
-     *  face count, or a failure, through [faceTransferMsg]. */
-    fun exportFaceIndex(uri: Uri) {
-        viewModelScope.launch {
-            _faceTransferInProgress.value = true
-            try {
-                val count = runCatching {
-                    context.contentResolver.openOutputStream(uri)?.use { exportFaceIndexUseCase(it) } ?: -1
-                }.getOrElse { -1 }
-                _faceTransferMsg.value = when {
-                    count > 0 -> context.getString(R.string.settings_ai_export_done, count)
-                    count == 0 -> context.getString(R.string.settings_ai_export_empty)
-                    else -> context.getString(R.string.settings_ai_transfer_failed)
-                }
-                // A real file landed: offer to send it on (another app / nearby device) via the system
-                // share sheet, so the user does not have to hunt for it to Quick Share it.
-                if (count > 0) _faceExportedUri.value = uri
-            } finally {
-                _faceTransferInProgress.value = false
-            }
-        }
-    }
-
-    /** Read a face index from [uri] and fold it into the account, then recluster so the imported faces
-     *  form people. Reports the counts, or a failure, through [faceTransferMsg]. */
-    fun importFaceIndex(uri: Uri) {
-        viewModelScope.launch {
-            _faceTransferInProgress.value = true
-            try {
-                val userId = accountManager.getPrimaryUserId().firstOrNull() ?: run {
-                    _faceTransferMsg.value = context.getString(R.string.settings_ai_transfer_failed)
-                    return@launch
-                }
-                // Stand any in-flight walk down first, so it cannot re-detect and overwrite the faces we are
-                // about to import (which would wipe their name labels), mirroring rescan's order.
-                faceIndexingScheduler.reset()
-                val result = runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { importFaceIndexUseCase(it) }
-                }.getOrNull()
-                when (result) {
-                    is FaceIndexImportOutcome.Success -> {
-                        clusterFacesUseCase(userId)
-                        _faceTransferMsg.value = context.getString(
-                            R.string.settings_ai_import_done, result.faces, result.people,
-                        )
-                        // Resume indexing: the imported photos are marked scanned, so the walk skips them and
-                        // only picks up anything new, reclustering at the end without disturbing the faces.
-                        faceIndexingScheduler.requestIndex(userId)
-                    }
-                    is FaceIndexImportOutcome.ReattachScheduled -> {
-                        // A different model: the names are staged, and a fresh scan puts them back on this
-                        // device's own faces by where each one sat, so start indexing and say what will happen.
-                        _faceTransferMsg.value =
-                            context.getString(R.string.settings_ai_import_reattach, result.people)
-                        faceIndexingScheduler.requestIndex(userId)
-                    }
-                    // A wrong account is a mismatch the user can act on, unlike the generic failure an
-                    // unreadable or missing file (a null result) gets.
-                    FaceIndexImportOutcome.WrongAccount -> {
-                        _faceTransferMsg.value = context.getString(R.string.settings_ai_import_wrong_account)
-                        // A refused import folded in no faces, so re-arm the walk the reset above stood
-                        // down; otherwise a rejected file leaves indexing idle.
-                        faceIndexingScheduler.requestIndex(userId)
-                    }
-                    else -> {
-                        _faceTransferMsg.value = context.getString(R.string.settings_ai_transfer_failed)
-                        faceIndexingScheduler.requestIndex(userId)
-                    }
-                }
-            } finally {
-                _faceTransferInProgress.value = false
-            }
-        }
-    }
-
     /** Persist which top-level tab the gallery opens on at app start. The gallery reads the key
      *  once on first composition; this setter is for immediate UI feedback in Settings. */
     fun setLandingTab(tab: LandingTab) {
@@ -1892,6 +1824,13 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[SettingsKeys.COMPRESS_ON_UPLOAD] = enabled }
             _uiState.update { it.copy(compressOnUpload = enabled) }
+        }
+    }
+
+    fun setCompressHdrPhotos(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[SettingsKeys.COMPRESS_HDR_PHOTOS] = enabled }
+            _uiState.update { it.copy(compressHdrPhotos = enabled) }
         }
     }
 
@@ -2030,17 +1969,41 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setAppLockEnabled(enabled: Boolean) {
-        viewModelScope.launch {
+    /**
+     * Turns the app lock on or off. Turning it off weakens the lock, so the change waits for
+     * [reauthenticate] to report a successful authentication and is dropped without one.
+     */
+    fun setAppLockEnabled(enabled: Boolean, reauthenticate: (onAuthenticated: () -> Unit) -> Unit) {
+        changeAppLock(reauthenticate, change = { it.copy(enabled = enabled) }) {
             appLockManager.setLockEnabled(enabled)
             _uiState.update { it.copy(appLockEnabled = enabled) }
         }
     }
 
-    fun setAppLockTimeoutSeconds(seconds: Int) {
-        viewModelScope.launch {
+    /** Sets the app lock timeout. A longer one weakens the lock and waits for [reauthenticate] the same way. */
+    fun setAppLockTimeoutSeconds(seconds: Int, reauthenticate: (onAuthenticated: () -> Unit) -> Unit) {
+        changeAppLock(reauthenticate, change = { it.copy(timeoutMs = seconds.coerceAtLeast(0) * 1000L) }) {
             appLockManager.setLockTimeoutSeconds(seconds)
             _uiState.update { it.copy(appLockTimeoutSeconds = seconds) }
+        }
+    }
+
+    /**
+     * Writes an app lock change, first through [reauthenticate] when [appLockChangeNeedsAuth] finds that it
+     * weakens the lock. The decision reads the stored settings rather than this screen's copy of them.
+     */
+    private fun changeAppLock(
+        reauthenticate: (onAuthenticated: () -> Unit) -> Unit,
+        change: (AppLockSettings) -> AppLockSettings,
+        write: suspend () -> Unit,
+    ) {
+        viewModelScope.launch {
+            val current = appLockManager.settings.first()
+            if (appLockChangeNeedsAuth(current, change(current))) {
+                reauthenticate { viewModelScope.launch { write() } }
+            } else {
+                write()
+            }
         }
     }
 
@@ -2109,63 +2072,54 @@ class SettingsViewModel @Inject constructor(
     }
 
     @OptIn(coil.annotation.ExperimentalCoilApi::class)
-    fun signOut() {
+    fun signOut(vault: eu.akoos.photos.data.hidden.SignOutVaultChoice = eu.akoos.photos.data.hidden.SignOutVaultChoice.DELETE) {
         viewModelScope.launch {
             accountManager.getPrimaryUserId().firstOrNull()?.let { userId ->
+                // 0. Before anything else, and awaited: stop an ML sync save or restore. It calls into
+                //    this account's Drive client and writes its face data, and the account stays the
+                //    signed-in one until the very end below, so the run would not stop on its own before
+                //    the client is freed and the faces are wiped. Then cancel the widget updates, so none
+                //    draws this account's photo onto the home screen while the account is leaving; the
+                //    widgets get them back once the account is gone (PhotoWidgetSignOut).
+                runCatching { mlSyncSignOut.stopFor(userId) }
+                runCatching { PhotoWidgetUpdateWorker.cancelAll(context) }
                 // 1. Stop anything that could re-decrypt content back into the caches we are about
                 //    to wipe, and stop the persistent process-keeper service.
-                runCatching {
-                    SyncWorker.cancel(workManager)
-                    workManager.cancelUniqueWork(SyncWorker.NAME_ONESHOT)
-                    workManager.cancelUniqueWork(SyncWorker.NAME_CONTENT_OBSERVER)
-                    workManager.cancelAllWorkByTag(eu.akoos.photos.worker.AlbumDownloadWorker.TAG)
-                    eu.akoos.photos.service.BackgroundSyncService.stop(context)
-                }
+                eu.akoos.photos.util.SignOutCleanup.stopBackgroundWork(context, workManager)
                 // 2. Wipe plaintext key material + this user's cached cloud rows BEFORE the account
                 //    token disappears (heap can't recover keys; the re-login starts from a clean
                 //    fetch instead of replaying stale rows that showed up with black thumbnails).
-                cloudRepo.clearCacheForSignOut(userId)
+                // The photos the user chose to keep go to the gallery before the vault is emptied; the
+                // wipe then spares any that could not be moved.
+                val vaultFiles = runCatching { hiddenStorage.vaultBlobUris().size }.getOrDefault(0)
+                var vaultNote = "vault deleted ($vaultFiles files)"
+                val vaultWipe = when (vault) {
+                    eu.akoos.photos.data.hidden.SignOutVaultChoice.DELETE -> eu.akoos.photos.domain.repository.VaultWipe.All
+                    eu.akoos.photos.data.hidden.SignOutVaultChoice.MOVE_OUT -> {
+                        val rescued = runCatching {
+                            hiddenVaultRestorer.rescueDeviceOnly(
+                                eu.akoos.photos.data.hidden.HiddenRescue.SIGN_OUT_FOLDER,
+                            )
+                        }.getOrNull()
+                        vaultNote = eu.akoos.photos.data.hidden.VaultSignOutPolicy.vaultNote(rescued)
+                        eu.akoos.photos.data.hidden.VaultSignOutPolicy.wipeAfterRescue(rescued)
+                    }
+                }
+                cloudRepo.clearCacheForSignOut(userId, vaultWipe)
                 // 3. Delete the decrypted on-disk caches + Coil's caches so no decrypted photo or
                 //    thumbnail of the signed-out user stays readable, and drop the diagnostics
                 //    buffers, which are process-lifetime and would otherwise carry into a sign-in as
-                //    a different user. The offline blobs, the hidden vault and the key material are
-                //    wiped inside clearCacheForSignOut above so EVERY sign-out route (including a
-                //    server-side force-logout) covers them; MediaStore originals and the encrypted
-                //    in-flight upload spill are left alone.
+                //    a different user. The offline blobs, the hidden vault, the widgets' bitmaps and
+                //    the key material are wiped inside clearCacheForSignOut above so EVERY sign-out
+                //    route (including a server-side force-logout) covers them; MediaStore originals
+                //    and the encrypted in-flight upload spill are left alone.
                 runCatching {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        listOf("thumbnails", "fullres", "fullres-session", "editor", "video_editor", "motion")
-                            .forEach { File(context.cacheDir, it).deleteRecursively() }
-                        context.cacheDir.listFiles { f -> f.name.startsWith("album_dl_") }?.forEach { it.delete() }
-                        // Sign-out only: a widget's cached bitmap is a decrypted cloud photo, and the
-                        // CLOUD_* modes cannot re-fetch one without auth. Sweeping it on any other
-                        // cache-clear route would blank the launcher with nothing able to redraw it.
-                        context.cacheDir.listFiles { f -> f.name.startsWith("widget_") }?.forEach { it.delete() }
-                        eu.akoos.photos.widget.PhotoWidget.clearBitmapCache()
-                        val loader = context.imageLoader
-                        loader.memoryCache?.clear()
-                        loader.diskCache?.clear()
+                        eu.akoos.photos.util.SignOutCleanup.clearDecryptedCaches(context)
                         eu.akoos.photos.util.SyncDiagnostics.clear()
                         eu.akoos.photos.util.PerfDiagnostics.clear()
                         eu.akoos.photos.util.ImportDiagnostics.clear()
                         File(context.filesDir, "diagnostics").deleteRecursively()
-                        // Drop the Glance state still pointing at the swept bitmaps so each widget
-                        // redraws its placeholder now rather than on its next natural tick.
-                        val glanceManager = androidx.glance.appwidget.GlanceAppWidgetManager(context)
-                        glanceManager.getGlanceIds(eu.akoos.photos.widget.PhotoWidget::class.java)
-                            .forEach { glanceId ->
-                                androidx.glance.appwidget.state.updateAppWidgetState(
-                                    context,
-                                    androidx.glance.state.PreferencesGlanceStateDefinition,
-                                    glanceId,
-                                ) { prefs ->
-                                    prefs.toMutablePreferences().also { mp ->
-                                        mp.remove(eu.akoos.photos.widget.PhotoWidgetKeys.CACHED_BITMAP_PATH)
-                                        mp.remove(eu.akoos.photos.widget.PhotoWidgetKeys.CURRENT_URI)
-                                    }
-                                }
-                                eu.akoos.photos.widget.PhotoWidget().update(context, glanceId)
-                            }
                     }
                 }
                 // 4. Clear account-tied DataStore state so a sign-in as a different user can't
@@ -2173,10 +2127,13 @@ class SettingsViewModel @Inject constructor(
                 //    ids, or favourite list. We keep UI preferences (theme, palette, language) and
                 //    machine-level flags (onboarding-complete, app-lock, update throttle).
                 runCatching { AccountScopedPreferences.clear(context, userId) }
-                // Reset the MainActivity-held lock timestamps BEFORE disableAccount triggers
-                // the route change. A re-login by a different user inherits a fresh
-                // sinceBackground window so the next resume can't fire the previous user's
-                // re-lock check.
+                // The line goes in after the buffers were emptied above, so it opens the next session's log.
+                eu.akoos.photos.util.SyncDiagnostics.log("sign-out: by user, $vaultNote")
+                // The handler every sign-out reaches must know this one was asked for.
+                eu.akoos.photos.data.hidden.UserSignOut.mark(userId.id)
+                // End the app lock's post-unlock grace in AppLockSession, which holds the lock
+                // timestamps, BEFORE disableAccount triggers the route change, so the stop and
+                // start of the sign-in flow is judged by the lock timeout alone.
                 appLockManager.notifyResetLockTimestamps()
                 accountManager.disableAccount(userId)
             }
@@ -2208,3 +2165,17 @@ private data class LocalStorage(
 )
 
 private const val CLOUD_TRASH_TTL_MS = 5L * 60L * 1000L
+
+/** Shortest pause between two reads of the backup totals, each a pass over the user's whole listing. */
+private const val BACKUP_TOTALS_MIN_INTERVAL_MS = 1_000L
+
+/**
+ * Passes each value on at once, then waits [pauseMs] before asking upstream for the next. Room folds
+ * the writes to a query's tables into one pending re-run and runs it only when the next value is
+ * asked for, so a Room query flow paced this way re-runs at most once per pause, however fast its
+ * table is written.
+ */
+internal fun <T> Flow<T>.pacedBy(pauseMs: Long): Flow<T> = transform { value ->
+    emit(value)
+    delay(pauseMs)
+}

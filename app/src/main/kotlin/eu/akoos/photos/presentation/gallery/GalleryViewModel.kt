@@ -91,6 +91,7 @@ import eu.akoos.photos.data.preferences.SettingsKeys
 import eu.akoos.photos.data.preferences.settingsDataStore
 import eu.akoos.photos.domain.entity.GalleryItem
 import eu.akoos.photos.domain.model.PersonSummary
+import eu.akoos.photos.data.repository.SyncStateSnapshot
 import eu.akoos.photos.data.repository.drive.PhotoStreamService
 import eu.akoos.photos.domain.repository.DrivePhotoRepository
 import eu.akoos.photos.domain.repository.LocalMediaRepository
@@ -137,7 +138,7 @@ private data class GallerySources(
  * locale and first-seen order are identical to the prior inline grouping, so the timeline is
  * unchanged. groupBy yields a LinkedHashMap, preserving encounter order.
  */
-private fun groupByMonth(items: List<GalleryItem>): List<Pair<String, List<GalleryItem>>> {
+internal fun groupByMonth(items: List<GalleryItem>): List<Pair<String, List<GalleryItem>>> {
     val fmt = monthYearFormat()
     val scratch = Date()
     return items
@@ -150,7 +151,7 @@ private fun groupByMonth(items: List<GalleryItem>): List<Pair<String, List<Galle
  * shape as [groupByMonth]; the "d MMMM yyyy" label matches the grid's prior inline Day format, so
  * the 3-column default headers are unchanged. groupBy yields a LinkedHashMap, preserving order.
  */
-private fun groupByDay(items: List<GalleryItem>): List<Pair<String, List<GalleryItem>>> {
+internal fun groupByDay(items: List<GalleryItem>): List<Pair<String, List<GalleryItem>>> {
     val fmt = dayMonthYearFormat()
     val scratch = Date()
     return items
@@ -168,6 +169,21 @@ private data class GalleryComputed(
     val dayGroups: List<Pair<String, List<GalleryItem>>>,
     val onThisDay: List<Pair<Int, List<GalleryItem>>>,
 )
+
+/**
+ * Cloud ids of the SYNCED rows that name a device file: the backed-up photos this device also holds.
+ * A row with a blank uri names no file and leaves its id out. With no such row the answer is the
+ * snapshot's own [SyncStateSnapshot.Rows.syncedCloudIds], shared with its other readers.
+ */
+internal fun syncedCloudIdsOnDevice(sync: SyncStateSnapshot.Rows): Set<String> =
+    if (sync.rows.none { it.status == SyncStatus.SYNCED && it.localUri.isBlank() }) {
+        sync.syncedCloudIds
+    } else {
+        sync.rows.asSequence()
+            .filter { it.status == SyncStatus.SYNCED && it.localUri.isNotBlank() }
+            .mapNotNull { it.cloudFileId }
+            .toSet()
+    }
 
 @HiltViewModel
 class GalleryViewModel @Inject constructor(
@@ -191,6 +207,7 @@ class GalleryViewModel @Inject constructor(
     private val transferCenter: TransferCenter,
     private val undoController: eu.akoos.photos.presentation.common.UndoController,
     private val syncStateRepo: SyncStateRepository,
+    private val syncStateSnapshot: SyncStateSnapshot,
     private val networkObserver: eu.akoos.photos.util.NetworkObserver,
     private val albumPhotoMembershipDao: eu.akoos.photos.data.db.dao.AlbumPhotoMembershipDao,
     private val photoListingDao: eu.akoos.photos.data.db.dao.PhotoListingDao,
@@ -202,8 +219,8 @@ class GalleryViewModel @Inject constructor(
     private val cryptoServiceClient: eu.akoos.photos.crypto.CryptoServiceClient,
     private val faceDao: eu.akoos.photos.data.db.dao.FaceDao,
     private val observePeopleUseCase: eu.akoos.photos.domain.usecase.ObservePeopleUseCase,
-    private val addPhotosToPersonUseCase: eu.akoos.photos.domain.usecase.AddPhotosToPersonUseCase,
     private val moveToFolder: MoveToFolderUseCase,
+    private val folderDelete: eu.akoos.photos.presentation.folders.DeviceFolderDeleteController,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GalleryUiState())
@@ -303,6 +320,14 @@ class GalleryViewModel @Inject constructor(
         .map { it > 0 }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /** Whether on-device face recognition is on (the AI master and the face switch), which offers Add to
+     *  person on the selection, for a guest as for an account. Off until the switches resolve, so the
+     *  action never flashes in. */
+    val faceEnabled: StateFlow<Boolean> = context.settingsDataStore.data
+        .map { it[SettingsKeys.AI_FEATURES_ENABLED] == true && it[SettingsKeys.FACE_ENABLED] == true }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     /** Avatar dot tap → re-run a check, which re-opens the update dialog if an update is still
      *  available (the Activity's UpdaterHost renders it). Works after a relaunch where the in-memory
      *  pending update was lost but the dot is lit from the persisted marker. */
@@ -317,14 +342,9 @@ class GalleryViewModel @Inject constructor(
     val downloadedCloudLinkIds: StateFlow<Set<String>> = accountManager.getPrimaryUserId()
         .flatMapLatest { userId ->
             if (userId == null) flowOf(emptySet())
-            else syncStateRepo.observeAll(userId).map { states ->
-                states.asSequence()
-                    .filter { it.status == SyncStatus.SYNCED }
-                    .filter { it.cloudFileId != null && it.localUri.isNotBlank() }
-                    .map { it.cloudFileId!! }
-                    .toSet()
-            }
+            else syncStateSnapshot.observe(userId).map { syncedCloudIdsOnDevice(it) }
         }
+        .flowOn(Dispatchers.Default)
         .retryOnDbTear("GalleryDownloadedIds")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
@@ -495,7 +515,7 @@ class GalleryViewModel @Inject constructor(
                     // gallery emission re-applied it — a visible flicker while "Hide photos in
                     // albums" is on.
                     val filtered = applyFilter(
-                        applyContentFilter(state.items, state.contentFilter),
+                        applyContentFilter(state.items, state.contentFilter, state.offlinePinIds),
                         state.selectedFilter,
                         favIds,
                         state.albumHideCloudIds,
@@ -518,9 +538,11 @@ class GalleryViewModel @Inject constructor(
                 .distinctUntilChanged()
                 .collect { ids ->
                     val state = _uiState.value
-                    if (state.selectedFilter == GalleryFilter.Offline) {
+                    if (state.selectedFilter == GalleryFilter.Offline ||
+                        state.contentFilter.syncStatus == SyncStatusFilter.Offline
+                    ) {
                         val filtered = applyFilter(
-                            applyContentFilter(state.items, state.contentFilter),
+                            applyContentFilter(state.items, state.contentFilter, ids),
                             state.selectedFilter,
                             state.favoriteIds,
                             state.albumHideCloudIds,
@@ -618,7 +640,7 @@ class GalleryViewModel @Inject constructor(
     private fun recomputeFilteredForPerson() {
         val state = _uiState.value
         val filtered = applyFilter(
-            applyContentFilter(state.items, state.contentFilter),
+            applyContentFilter(state.items, state.contentFilter, state.offlinePinIds),
             state.selectedFilter,
             state.favoriteIds,
             state.albumHideCloudIds,
@@ -743,18 +765,14 @@ class GalleryViewModel @Inject constructor(
             emit(emptySet())
         }
 
-        // SyncStateRepo rows with HIDDEN status carry the cloud linkId of a photo whose
+        // Sync rows with HIDDEN status carry the cloud linkId of a photo whose
         // local twin lives in the Hidden vault. The gallery shows those cloud photos but
         // marks them with a crossed-out eye overlay so the user can see which cloud
         // entries are "hidden on this device" without opening the Hidden screen.
-        val hiddenCloudLinkIdsFlow = if (userId != null) syncStateRepo.observeAll(userId).map { states ->
-            states.asSequence()
-                .filter { it.status == SyncStatus.HIDDEN && it.cloudFileId != null }
-                .map { it.cloudFileId!! }
-                .toSet()
-        }.catch {
-            // A transient DAO read during a write burst degrades to "no overlays"
-            // instead of throwing into combine.
+        val hiddenCloudLinkIdsFlow = if (userId != null) syncStateSnapshot.observe(userId).map { sync ->
+            sync.hiddenCloudIds
+        }.flowOn(Dispatchers.Default).catch {
+            // A failure here degrades to "no overlays" instead of throwing into combine.
             android.util.Log.w("GalleryVM", "hiddenCloudLinkIds source failed: ${it.message}")
             emit(emptySet())
         } else flowOf(emptySet())
@@ -872,7 +890,7 @@ class GalleryViewModel @Inject constructor(
                         notHidden && notExcludedBucket
                     }
                     val filtered = applyFilter(
-                        applyContentFilter(items, snapshot.contentFilter),
+                        applyContentFilter(items, snapshot.contentFilter, snapshot.offlinePinIds),
                         snapshot.selectedFilter,
                         snapshot.favoriteIds,
                         sources.cloudInAlbum,
@@ -1009,8 +1027,7 @@ class GalleryViewModel @Inject constructor(
             // button would be a no-op against it. Routing every trigger through the worker keeps
             // cancellation working (mirrors the download worker design). Count only queued rows: an
             // out-of-scope LOCAL_ONLY row is not upload work, so it must not keep waking the worker.
-            val pending = syncStateRepo.observeAll(userId).first()
-                .count { it.status == SyncStatus.LOCAL_ONLY && it.queued }
+            val pending = syncStateRepo.countPendingUploads(userId).first()
             if (pending > 0) {
                 val wifiOnly = context.settingsDataStore.data
                     .map { it[SettingsKeys.SYNC_WIFI_ONLY] != false }.first()
@@ -1121,7 +1138,7 @@ class GalleryViewModel @Inject constructor(
     fun onFilterSelected(filter: GalleryFilter) {
         val state = _uiState.value
         val filtered = applyFilter(
-            applyContentFilter(state.items, state.contentFilter),
+            applyContentFilter(state.items, state.contentFilter, state.offlinePinIds),
             filter,
             state.favoriteIds,
             state.albumHideCloudIds,
@@ -1167,7 +1184,7 @@ class GalleryViewModel @Inject constructor(
     fun setContentFilter(filter: ContentFilter) {
         val state = _uiState.value
         val filtered = applyFilter(
-            applyContentFilter(state.items, filter),
+            applyContentFilter(state.items, filter, state.offlinePinIds),
             state.selectedFilter,
             state.favoriteIds,
             state.albumHideCloudIds,
@@ -1471,7 +1488,12 @@ class GalleryViewModel @Inject constructor(
     private var pendingPermissionResult: DeletePhotoUseCase.Result.NeedsMediaWritePermission? = null
 
     fun deleteSelected(freeUpSpace: Boolean, deleteFromCloud: Boolean) {
-        val items = _uiState.value.selectedItems.toList()
+        runDelete(_uiState.value.selectedItems.toList(), freeUpSpace, deleteFromCloud)
+    }
+
+    /** The one delete body the selection and a whole device folder share, so both raise the same
+     *  blocking sheet, the same system trash dialog and the same failure snackbar. */
+    private fun runDelete(items: List<GalleryItem>, freeUpSpace: Boolean, deleteFromCloud: Boolean) {
         if (items.isEmpty()) return
         viewModelScope.launch {
             _uiState.update { it.copy(multiDeleteState = MultiDeleteState.Working) }
@@ -1490,11 +1512,11 @@ class GalleryViewModel @Inject constructor(
                     // No system-trash dialog was needed, so any device copies were either untouched or
                     // removed permanently (pre-R). Only a cloud trash is reversible, so the undo carries
                     // no local URIs: localRecoverable = false.
-                    buildDeleteUndoAction(items, freeUpSpace, deleteFromCloud, hide = false, localRecoverable = false)
+                    buildDeleteUndoAction(result.landed(items), freeUpSpace, deleteFromCloud, hide = false, localRecoverable = false)
                         ?.let { undoController.offer(it) }
                     _uiState.update { it.copy(
                         selectedItems    = emptySet(),
-                        multiDeleteState = MultiDeleteState.Done,
+                        multiDeleteState = deleteOutcome(result),
                     ) }
                 }
                 is DeletePhotoUseCase.Result.CloudDeleteFailed ->
@@ -1516,73 +1538,93 @@ class GalleryViewModel @Inject constructor(
         // would end up BOTH in Hidden and in MediaStore — the worst of both worlds).
         // Unguarded: rollback owns both halves and no-ops when there is nothing pending, so a
         // condition on the private copies alone would skip a cloud-only half that is still hidden.
+        val pending = pendingPermissionResult
         pendingPermissionResult = null
-        rollbackPendingHide()
         _uiState.update { it.copy(pendingDeleteIntent = null) }
+        // A later chunk of a large delete was declined. The chunks before it already went, so they
+        // finish as a landed delete, whose hide commit keeps every photo still on the device in view.
+        if (pending != null && pending.done.isNotEmpty()) {
+            viewModelScope.launch { finishConfirmedDelete(pending, pending.done, DeletePhotoUseCase.Result.Success()) }
+            return
+        }
+        rollbackPendingHide()
     }
 
+    /** "Couldn't delete the photos" when [result] left device files in place, else done. */
+    private fun deleteOutcome(result: DeletePhotoUseCase.Result.Success): MultiDeleteState =
+        if (result.keptOnDevice.isEmpty()) MultiDeleteState.Done
+        else MultiDeleteState.Failed(context.getString(R.string.album_delete_photos_failed))
 
     fun onDeletePermissionGranted() {
         val pending = pendingPermissionResult
         pendingPermissionResult = null
+        _uiState.update { it.copy(pendingDeleteIntent = null) }
         viewModelScope.launch {
             // Run the deferred cloud delete first; surface failure as a multi-delete error.
             val cloudResult = if (pending != null) {
                 // No account is needed to finish a local delete; the use case guards its own cloud
                 // branch, returning CloudDeleteFailed only when there are cloud links and no session.
                 val userId = accountManager.getPrimaryUserId().first()
-                deletePhotoUseCase.completeAfterPermissionGranted(
-                    userId          = userId,
-                    cloudLinkIds    = pending.cloudLinkIds,
-                    items           = pending.itemsBeingDeleted,
-                    freeUpSpace     = pending.freeUpSpace,
-                    hide            = pending.hide,
-                )
-            } else DeletePhotoUseCase.Result.Success
-            if (cloudResult is DeletePhotoUseCase.Result.CloudDeleteFailed) {
-                _uiState.update { it.copy(
+                deletePhotoUseCase.completeAfterPermissionGranted(userId, pending)
+            } else DeletePhotoUseCase.Result.Success()
+            when (cloudResult) {
+                is DeletePhotoUseCase.Result.NeedsMediaWritePermission -> {
+                    // The next chunk of a delete too large for one request, launched like the first.
+                    pendingPermissionResult = cloudResult
+                    _uiState.update { it.copy(pendingDeleteIntent = cloudResult.pendingIntent) }
+                }
+                is DeletePhotoUseCase.Result.CloudDeleteFailed -> _uiState.update { it.copy(
                     multiDeleteState    = MultiDeleteState.Failed(context.getString(R.string.viewer_delete_drive_failed)),
                     pendingDeleteIntent = null,
                 ) }
-                return@launch
+                is DeletePhotoUseCase.Result.Success ->
+                    finishConfirmedDelete(pending, pending?.confirmedItems.orEmpty(), cloudResult)
             }
-            // If a multi-hide flow was waiting on this permission, commit the private URIs now
-            // so the photos start appearing in the Hidden album. No-op if no hide was pending.
-            // Snapshot the URIs first — commitPendingHide() clears the pending list.
-            val hideUris = pendingHidePrivateUris
-            val hideCloudIds = pendingHideCloudLinkIds
-            // The cloud-only half is the whole hide here and it landed, so the folder stays
-            // hidden and its pending name is released rather than rolled back. Left set, it
-            // outlives this hide on a long-lived screen and the next rollback for anything
-            // else reads it as its own, revealing a folder the user never asked to reveal.
-            pendingHideCloudLinkIds = emptyList()
-            pendingHideFolderName = null
-            if (hideUris.isNotEmpty()) commitPendingHide()
-            // Offer Undo for whichever reversible action just landed: a hide (restore the
-            // vault URIs and drop the client-side filter) or a cloud-trash delete (restore the
-            // Drive linkIds). A plain local free-up-space delete carries no undo. A cancelled
-            // dialog never reaches here.
-            val undo: UndoAction? = when {
-                hideUris.isNotEmpty() -> buildHideUndoAction(hideUris, hideCloudIds)
-                pending != null && !pending.hide ->
-                    // The system trash keeps the local files for ~30 days, so a confirmed delete (cloud
-                    // and/or device) is reversible: localRecoverable = true.
-                    buildDeleteUndoAction(
-                        pending.itemsBeingDeleted,
-                        pending.freeUpSpace,
-                        deleteFromCloud = pending.cloudLinkIds.isNotEmpty(),
-                        hide = false,
-                        localRecoverable = true,
-                    )
-                else -> null
-            }
-            if (undo != null) undoController.offer(undo)
-            _uiState.update { it.copy(
-                selectedItems       = emptySet(),
-                multiDeleteState    = MultiDeleteState.Done,
-                pendingDeleteIntent = null,
-            ) }
         }
+    }
+
+    /** Settle a delete or hide whose system dialog was confirmed, for the [carriedOut] items it took. */
+    private fun finishConfirmedDelete(
+        pending: DeletePhotoUseCase.Result.NeedsMediaWritePermission?,
+        carriedOut: List<GalleryItem>,
+        result: DeletePhotoUseCase.Result.Success,
+    ) {
+        // If a multi-hide flow was waiting on this permission, commit the private URIs now
+        // so the photos start appearing in the Hidden album. No-op if no hide was pending.
+        // Snapshot the URIs first: commitPendingHide() clears the pending list.
+        val hideUris = pendingHidePrivateUris
+        val hideCloudIds = pendingHideCloudLinkIds
+        // The cloud-only half is the whole hide here and it landed, so the folder stays
+        // hidden and its pending name is released rather than rolled back. Left set, it
+        // outlives this hide on a long-lived screen and the next rollback for anything
+        // else reads it as its own, revealing a folder the user never asked to reveal.
+        pendingHideCloudLinkIds = emptyList()
+        pendingHideFolderName = null
+        if (hideUris.isNotEmpty()) commitPendingHide()
+        // Offer Undo for whichever reversible action just landed: a hide (restore the
+        // vault URIs and drop the client-side filter) or a cloud-trash delete (restore the
+        // Drive linkIds). A plain local free-up-space delete carries no undo.
+        val undo: UndoAction? = when {
+            hideUris.isNotEmpty() -> buildHideUndoAction(hideUris, hideCloudIds)
+            pending != null && !pending.hide ->
+                // The system trash keeps the local files for ~30 days, so a confirmed delete (cloud
+                // and/or device) is reversible: localRecoverable = true.
+                buildDeleteUndoAction(
+                    carriedOut,
+                    pending.freeUpSpace,
+                    deleteFromCloud = pending.deleteFromCloud,
+                    hide = false,
+                    localRecoverable = true,
+                )
+            else -> null
+        }
+        if (undo != null) undoController.offer(undo)
+        _uiState.update { it.copy(
+            selectedItems       = emptySet(),
+            // A hide's commit already returns any photo still on the device to view.
+            multiDeleteState    = if (pending?.hide == true) MultiDeleteState.Done else deleteOutcome(result),
+            pendingDeleteIntent = null,
+        ) }
     }
 
     fun resetMultiDeleteState() {
@@ -1879,6 +1921,31 @@ class GalleryViewModel @Inject constructor(
      *  vault rather than being copied for nothing. */
     fun cancelFolderHide() {
         stopFolderHide.set(true)
+    }
+
+    /** The device folder delete awaiting confirmation, or null when none is. */
+    val folderDeleteRequest: StateFlow<eu.akoos.photos.presentation.folders.DeviceFolderDeleteRequest?> =
+        folderDelete.request
+
+    /**
+     * Ask about deleting [bucketName] with everything it holds on the device, and start reading what
+     * that would take. Nothing is deleted until [confirmDeleteFolder]. Held off while a folder hide
+     * runs, the same guard [requestHideFolder] keeps: that hide ends in a delete of its own, and the
+     * two would share the one system dialog a delete waits on.
+     */
+    fun requestDeleteFolder(bucketName: String) {
+        if (folderHideJob?.isActive == true) return
+        folderDelete.ask(viewModelScope, bucketName)
+    }
+
+    /** Drop the question. The folder is untouched. */
+    fun dismissDeleteFolderRequest() = folderDelete.dismiss()
+
+    /** Delete the photos the confirmation named, through the path a selection delete takes. Only the
+     *  device copies go: a backed-up photo keeps its Drive copy and becomes cloud-only. */
+    fun confirmDeleteFolder() {
+        val items = folderDelete.take() ?: return
+        runDelete(items, freeUpSpace = true, deleteFromCloud = false)
     }
 
     /**
@@ -2295,17 +2362,6 @@ class GalleryViewModel @Inject constructor(
      * @param albumLinkId Drive link ID of the target album.
      * @param albumName   Album display name, used only for the success snackbar.
      */
-    /** Attach the current selection to a named person, then exit selection. The membership survives a
-     *  rescan (stored against the person's name); an unnamed person is a no-op inside the use case. */
-    fun addSelectedToPerson(personId: Long) {
-        val keys = _uiState.value.selectedItems.map { it.stableId }
-        if (keys.isEmpty()) return
-        viewModelScope.launch {
-            addPhotosToPersonUseCase(personId, keys)
-            clearSelection()
-        }
-    }
-
     fun addSelectedToAlbum(
         albumLinkId: String,
         albumName: String,
@@ -2658,9 +2714,7 @@ class GalleryViewModel @Inject constructor(
             }
             // Offline = the cloud photos pinned for offline (their linkId is in OFFLINE_PIN_IDS).
             // Not a server tag, so it filters on the pinned set rather than CategorizeItem.
-            GalleryFilter.Offline -> baseItems.filter { item ->
-                (item as? GalleryItem.CloudOnly)?.cloud?.linkId?.let { id -> id in offlinePinIds } == true
-            }
+            GalleryFilter.Offline -> baseItems.filter { isItemOfflinePinned(it, offlinePinIds) }
             else -> {
                 val tagId = filter.tagId
                 if (tagId == null) baseItems else baseItems.filter { CategorizeItem.belongsTo(it, tagId) }
@@ -2678,7 +2732,11 @@ class GalleryViewModel @Inject constructor(
         }
     }
 
-    private fun applyContentFilter(items: List<GalleryItem>, filter: ContentFilter): List<GalleryItem> {
+    private fun applyContentFilter(
+        items: List<GalleryItem>,
+        filter: ContentFilter,
+        offlinePinIds: Set<String> = emptySet(),
+    ): List<GalleryItem> {
         var result = items
 
         // Sync status
@@ -2687,6 +2745,7 @@ class GalleryViewModel @Inject constructor(
             SyncStatusFilter.LocalOnly -> result.filterIsInstance<GalleryItem.LocalOnly>()
             SyncStatusFilter.BackedUp  -> result.filterIsInstance<GalleryItem.Synced>()
             SyncStatusFilter.CloudOnly -> result.filterIsInstance<GalleryItem.CloudOnly>()
+            SyncStatusFilter.Offline   -> result.filter { isItemOfflinePinned(it, offlinePinIds) }
         }
 
         // Media type
