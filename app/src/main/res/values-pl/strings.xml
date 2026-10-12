@@ -690,6 +690,7 @@
     <string name="album_rename_confirm">Zmień nazwę</string>
     <string name="album_remove_from_album">Usuń z albumu</string>
     <string name="album_move_to_album">Przenieś do albumu</string>
+    <string name="album_add_to_other_album">Dodaj do innego albumu</string>
     <string name="album_moved_to_album">Przeniesiono do \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Zdjęcia dodane do udostępnionego albumu są kopiowane do właściciela albumu.</string>
     <string name="op_moving_to_album">Przenoszenie do albumu…</string>
@@ -1122,6 +1123,8 @@
     <!-- "On this day" memories card on the Photos tab. Shown above the grid when the user
          has photos taken on TODAY's calendar date (same month + day) in earlier years. -->
     <string name="gallery_on_this_day">Tego dnia</string>
+    <string name="settings_on_this_day_range">Dni przed i po</string>
+    <string name="settings_on_this_day_range_desc">0 pokazuje tylko sam dzień. Od 1 do 3 dodaje tyle dni przed i po nim.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">%1$d rok temu</item>
         <item quantity="few">%1$d lata temu</item>
@@ -1611,6 +1614,9 @@
     <string name="duplicates_filter_identical">Identyczne</string>
     <string name="duplicates_filter_similar">Podobne</string>
     <string name="duplicates_ignore_group">Ignoruj</string>
+    <string name="duplicates_delete_group">Usuń grupę</string>
+    <string name="duplicates_confirm_title_whole">Usunąć wszystkie kopie?</string>
+    <string name="duplicates_confirm_message_whole">Usunięcie grupy kasuje każdą kopię w tej grupie, więc żadne z tych zdjęć nie zostaje. Zdjęcia spoza wybranych grup pozostają nietknięte.</string>
     <string name="duplicates_unignore_group">Przestań ignorować</string>
     <string name="duplicates_filter_ignored_label">Ignorowane grupy</string>
     <string name="duplicates_filter_ignored">Pokaż ignorowane</string>
@@ -1826,6 +1832,14 @@
     <string name="settings_ai_indexing_paused_battery">Wstrzymano, niski poziom baterii</string>
     <string name="settings_ai_indexing_paused_warm">Wstrzymano, telefon jest ciepły</string>
     <string name="settings_ai_indexing_paused_power_save">Wstrzymano, oszczędzanie baterii jest włączone</string>
+    <string name="settings_ai_charging_only">Tylko podczas ładowania</string>
+    <string name="settings_ai_charging_only_desc">Rozpoznawanie twarzy i wyszukiwanie zdjęć czekają na ładowarkę.</string>
+    <string name="settings_time_format">Format czasu</string>
+    <string name="settings_time_format_auto">Automatycznie</string>
+    <string name="settings_time_format_auto_desc">Zgodnie z 12- lub 24-godzinnym ustawieniem telefonu</string>
+    <string name="settings_time_format_24h">24-godzinny</string>
+    <string name="settings_time_format_12h">12-godzinny</string>
+    <string name="settings_ai_indexing_paused_not_charging">Wstrzymano, czeka na ładowarkę</string>
     <string name="settings_ai_indexing_paused_desc">Zdjęcia nie są przeszukiwane pod kątem twarzy, dopóki nie wznowisz.</string>
     <string name="settings_ai_indexing_progress">%1$d z %2$d zdjęć</string>
     <plurals name="settings_ai_indexing_people">
@@ -1917,6 +1931,20 @@
     <string name="settings_ml_drive_save_desc">Zapisuje zaszyfrowaną kopię, którą mogą przywrócić Twoje inne urządzenia</string>
     <string name="settings_ml_drive_restore">Przywróć z Drive</string>
     <string name="settings_ml_drive_restore_desc">Używa danych zapisanych przez jedno z Twoich urządzeń zamiast ponownego skanowania</string>
+    <string name="settings_autosave_title">Zapisuj automatycznie</string>
+    <string name="settings_autosave_desc">Utrzymuje kopię na Dysku aktualną w tle.</string>
+    <string name="settings_autosave_after_changes">Po zmianach</string>
+    <string name="settings_autosave_daily">Codziennie</string>
+    <string name="settings_autosave_weekly">Co tydzień</string>
+    <string name="settings_autosave_after_changes_desc">Zapisuje około 10 minut po ostatniej zmianie, najwyżej raz na godzinę.</string>
+    <string name="settings_autosave_daily_desc">Zapisuje co noc około 23:59, jeśli coś się zmieniło.</string>
+    <string name="settings_autosave_weekly_desc">Zapisuje w niedzielę wieczorem około 23:59, jeśli coś się zmieniło.</string>
+    <string name="settings_autosave_last_saved">Ostatnio zapisano %1$s</string>
+    <string name="settings_autosave_failed">Ostatni zapis nie został ukończony. Spróbuje ponownie.</string>
+    <string name="settings_autosave_confirm_title">Zapisywać automatycznie?</string>
+    <string name="settings_autosave_confirm_ml">Zaszyfrowana kopia Twoich danych rozpoznawania twarzy i wyszukiwania jest zapisywana w tle na Twoim Proton Drive i utrzymywana na bieżąco. Zajmuje miejsce na Dysku, a danych mobilnych używa tylko wtedy, gdy mogą z nich korzystać kopie zapasowe. Pierwszy zapis rozpocznie się teraz.</string>
+    <string name="settings_autosave_confirm_labels">Zaszyfrowana kopia Twoich etykiet jest zapisywana w tle na Twoim Proton Drive i utrzymywana na bieżąco. Zajmuje miejsce na Dysku, a danych mobilnych używa tylko wtedy, gdy mogą z nich korzystać kopie zapasowe. Pierwszy zapis rozpocznie się teraz.</string>
+    <string name="settings_autosave_confirm_on">Włącz</string>
     <string name="settings_ml_drive_step_preparing">Przygotowywanie…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Szyfrowanie danych twarzy…</string>
     <string name="settings_ml_drive_step_encrypting_search">Szyfrowanie danych wyszukiwania…</string>
@@ -2494,5 +2522,31 @@
     <string name="whats_new_260_frame_body">W edytorze zdjęć umieść zdjęcie na płótnie o innym kształcie, takim jak 1:1, 9:16 lub Polaroid, wypełnionym kolorem lub miękkim rozmyciem. Narzędzie jest wciąż rozwijane i pojawią się kolejne usprawnienia.</string>
     <string name="whats_new_260_drive_title">Dane twarzy i wyszukiwania na Drive</string>
     <string name="whats_new_260_drive_body">Zapisz nazwy twarzy i dane wyszukiwania na Drive i przywróć je na innym telefonie, wybierając, co wróci, w „Ustawienia > Więcej ustawień > Uczenie maszynowe”.</string>
+    <string name="whats_new_260_autosave_title">Automatyczny zapis na Drive</string>
+    <string name="whats_new_260_autosave_body">Włącz „Zapisuj automatycznie” przy kopii na Drive danych twarzy i wyszukiwania albo etykiet, a kopia będzie aktualizowana w tle: po zmianach, codziennie lub co tydzień. Znajdziesz je w „Ustawienia > Więcej ustawień”, w sekcjach „Uczenie maszynowe” i „Etykiety”.</string>
+    <string name="whats_new_260_worldmap_title">Bogatsza mapa świata</string>
+    <string name="whats_new_260_worldmap_body">Mapa świata rysuje teraz granice państw i prowincji, zabarwia prowincję, w której robiono zdjęcia, nazywa miejsca przy powiększaniu i pokazuje te same pinezki co klasyczna mapa. Otwiera się nad Europą, a przy przesuwaniu i szczypaniu punkt pod palcami pozostaje na miejscu.</string>
+    <string name="whats_new_260_time_title">Format czasu</string>
+    <string name="whats_new_260_time_body">Sposób wyświetlania czasu wybierzesz w „Ustawienia > Wygląd i język > Format czasu”: automatyczny, 24-godzinny lub 12-godzinny, niezależnie od języka aplikacji. Automatyczny podąża za ustawieniem zegara telefonu.</string>
+    <string name="whats_new_260_onthisday_title">Dni przed i po</string>
+    <string name="whats_new_260_onthisday_body">„Tego dnia” pokazuje teraz tylko sam dzień. Od 0 do 3 dni przed i po wybierzesz w „Ustawienia > Wygląd i język > Biblioteka > Oś czasu > Tego dnia”.</string>
+    <string name="whats_new_260_duplicates_title">Przegląd duplikatów</string>
+    <string name="whats_new_260_duplicates_body">Szczypnij, przeciągnij lub dotknij dwukrotnie, aby powiększyć kopię nawet 6 razy, zanim zdecydujesz, co usunąć. „Usuń grupę” zaznacza naraz wszystkie kopie grupy.</string>
+    <string name="whats_new_260_intro_title">Zawiera wersję testową 1</string>
+    <string name="whats_new_260_intro_body">Ta wersja zawiera też wszystko z wersji testowej 1. Kolejne karty pokazują tylko to, co nowego od tamtej pory.</string>
+    <string name="whats_new_260_addalbum_title">Dodaj do innego albumu</string>
+    <string name="whats_new_260_addalbum_body">Zaznacz zdjęcia w albumie i wybierz „Dodaj do innego albumu” na pasku zaznaczania. Trafiają do drugiego albumu i zostają w tym, a w selektorze można utworzyć nowy album.</string>
+    <string name="whats_new_260_scans_title">Skanowanie dużych bibliotek</string>
+    <string name="whats_new_260_scans_body">W bibliotekach z ponad stu tysiącami twarzy oczekujące twarze są teraz przypisywane partiami do istniejących osób zamiast pozostawać niezgrupowane, a zdjęcia czekające na ponowną próbę przetrwają zamknięcie aplikacji.</string>
+    <string name="whats_new_260_dragselect_title">Zaznaczanie przeciąganiem w osobach</string>
+    <string name="whats_new_260_dragselect_body">Przytrzymaj zdjęcie na stronie osoby i przeciągnij, aby zaznaczyć zakres, jak na osi czasu i w albumach.</string>
+    <string name="whats_new_260_mappins_title">Czytelniejsze pinezki na mapie</string>
+    <string name="whats_new_260_mappins_body">Na klasycznej mapie i mapie świata pinezka, która zasłoniłaby większą, wyświetla się jako mała kropka, dopóki nie przybliżysz na tyle, by się zmieściła.</string>
+    <string name="whats_new_260_notif_title">Spokojniejsze powiadomienia</string>
+    <string name="whats_new_260_notif_body">Powiadomienie „Sprawdzanie nowych zdjęć…” nie miga już po powrocie do galerii.</string>
+    <string name="whats_new_260_tiles_title">Kafelki na szerokich ekranach</string>
+    <string name="whats_new_260_tiles_body">Kafelki skrótów u góry karty Albumy nie rozciągają się już na szerokim ekranie.</string>
+    <string name="whats_new_260_charging_title">Tylko podczas ładowania</string>
+    <string name="whats_new_260_charging_body">Włącz „Tylko podczas ładowania” w „Ustawienia > Więcej ustawień > Uczenie maszynowe”, aby skanowanie twarzy i wyszukiwania zdjęć czekało na ładowarkę. Wstrzymane skanowanie informuje o tym na swojej karcie.</string>
     <string name="whats_new_260_more">Do tego edytowalne daty w HEIC, GIF i RAW, grupy duplikatów, które można zignorować, wybór miejsca na mapie, język turecki oraz mnóstwo innych poprawek i usprawnień stabilności.</string>
 </resources>

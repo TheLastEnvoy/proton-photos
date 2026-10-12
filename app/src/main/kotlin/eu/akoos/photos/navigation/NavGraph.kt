@@ -132,6 +132,7 @@ import eu.akoos.photos.presentation.settings.FaceRecognitionScreen
 import eu.akoos.photos.presentation.settings.SemanticSearchScreen
 import eu.akoos.photos.presentation.settings.AppearanceSettingsScreen
 import eu.akoos.photos.presentation.settings.LandingTabScreen
+import eu.akoos.photos.presentation.settings.ClockFormatScreen
 import eu.akoos.photos.presentation.settings.LanguageSettingsScreen
 import eu.akoos.photos.presentation.settings.NotificationSettingsScreen
 import eu.akoos.photos.presentation.settings.PendingDeleteHandler
@@ -140,6 +141,7 @@ import eu.akoos.photos.presentation.settings.ExcludedFoldersScreen
 import eu.akoos.photos.presentation.settings.SyncFoldersScreen
 import eu.akoos.photos.presentation.settings.TimelineFilterScreen
 import eu.akoos.photos.presentation.settings.TimelineLayoutScreen
+import eu.akoos.photos.presentation.settings.TimelineOnThisDayScreen
 import eu.akoos.photos.presentation.settings.TimelineCategoriesScreen
 import eu.akoos.photos.presentation.settings.TimelineAlbumsScreen
 import eu.akoos.photos.presentation.settings.TimelineDeviceFoldersScreen
@@ -227,9 +229,11 @@ sealed class Screen(val route: String) {
     data object LandingTab : Screen("landing_tab")
     data object ThemeSettings : Screen("theme_settings")
     data object LanguageSettings : Screen("language_settings")
+    data object ClockFormatSettings : Screen("clock_format_settings")
     data object NotificationSettings : Screen("notification_settings")
     data object TimelineFilter : Screen("timeline_filter")
     data object TimelineLayout : Screen("timeline_layout")
+    data object TimelineOnThisDay : Screen("timeline_on_this_day")
     data object TimelineCategories : Screen("timeline_categories")
     data object TimelineAlbums : Screen("timeline_albums")
     data object TimelineDeviceFolders : Screen("timeline_device_folders")
@@ -1602,6 +1606,7 @@ fun NavGraph(
                 onBack = { navController.popBackStack() },
                 onThemeClick = { navController.navigate(Screen.ThemeSettings.route) },
                 onLanguageClick = { navController.navigate(Screen.LanguageSettings.route) },
+                onTimeFormatClick = { navController.navigate(Screen.ClockFormatSettings.route) },
                 onTimelineFilterClick = { navController.navigate(Screen.TimelineFilter.route) },
                 onAlbumsSettingsClick = { navController.navigate(Screen.AlbumsSettings.route) },
                 onLandingTabClick = { navController.navigate(Screen.LandingTab.route) },
@@ -1668,6 +1673,12 @@ fun NavGraph(
 
         composable(Screen.LanguageSettings.route) {
             LanguageSettingsScreen(
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(Screen.ClockFormatSettings.route) {
+            ClockFormatScreen(
                 onBack = { navController.popBackStack() },
             )
         }
@@ -1884,6 +1895,7 @@ fun NavGraph(
                 onBack = { navController.popBackStack() },
                 isSignedIn = navViewModel.isLoggedIn.collectAsStateWithLifecycle().value == true,
                 onOpenLayout = { navController.navigate(Screen.TimelineLayout.route) },
+                onOpenOnThisDay = { navController.navigate(Screen.TimelineOnThisDay.route) },
                 onOpenCategories = { navController.navigate(Screen.TimelineCategories.route) },
                 onOpenAlbums = { navController.navigate(Screen.TimelineAlbums.route) },
                 onOpenDeviceFolders = { navController.navigate(Screen.TimelineDeviceFolders.route) },
@@ -1891,7 +1903,14 @@ fun NavGraph(
         }
 
         composable(Screen.TimelineLayout.route) {
-            TimelineLayoutScreen(onBack = { navController.popBackStack() })
+            TimelineLayoutScreen(
+                onBack = { navController.popBackStack() },
+                onOpenOnThisDay = { navController.navigate(Screen.TimelineOnThisDay.route) },
+            )
+        }
+
+        composable(Screen.TimelineOnThisDay.route) {
+            TimelineOnThisDayScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Screen.TimelineCategories.route) {

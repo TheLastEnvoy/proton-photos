@@ -777,6 +777,14 @@
     <string name="settings_ai_indexing_paused_battery">Duraklatıldı, pil zayıf</string>
     <string name="settings_ai_indexing_paused_warm">Duraklatıldı, telefon ısındı</string>
     <string name="settings_ai_indexing_paused_power_save">Duraklatıldı, güç tasarrufu açık</string>
+    <string name="settings_ai_charging_only">Yalnızca şarj olurken</string>
+    <string name="settings_ai_charging_only_desc">Yüz tanıma ve fotoğraf arama taramaları şarj cihazını bekler.</string>
+    <string name="settings_time_format">Saat biçimi</string>
+    <string name="settings_time_format_auto">Otomatik</string>
+    <string name="settings_time_format_auto_desc">Telefonun 12 veya 24 saatlik ayarını izler</string>
+    <string name="settings_time_format_24h">24 saatlik</string>
+    <string name="settings_time_format_12h">12 saatlik</string>
+    <string name="settings_ai_indexing_paused_not_charging">Duraklatıldı, şarj cihazı bekleniyor</string>
     <string name="settings_ai_indexing_paused_desc">Devam ettirene kadar fotoğraflar yüzler için taranmaz.</string>
     <string name="settings_ai_indexing_progress">%2$d fotoğraftan %1$d</string>
     <plurals name="settings_ai_indexing_people">
@@ -791,6 +799,20 @@
     <string name="settings_ml_drive_save_desc">Diğer cihazlarının geri yükleyebileceği şifreli bir kopya sakla</string>
     <string name="settings_ml_drive_restore">Drive\'dan geri yükle</string>
     <string name="settings_ml_drive_restore_desc">Yeniden taramak yerine cihazlarından birinin kaydettiği verileri kullan</string>
+    <string name="settings_autosave_title">Otomatik kaydet</string>
+    <string name="settings_autosave_desc">Drive kopyasını arka planda güncel tutar.</string>
+    <string name="settings_autosave_after_changes">Değişikliklerden sonra</string>
+    <string name="settings_autosave_daily">Günlük</string>
+    <string name="settings_autosave_weekly">Haftalık</string>
+    <string name="settings_autosave_after_changes_desc">Son değişiklikten yaklaşık 10 dakika sonra kaydeder, saatte en fazla bir kez.</string>
+    <string name="settings_autosave_daily_desc">Bir şey değiştiyse her gece 23:59 civarında kaydeder.</string>
+    <string name="settings_autosave_weekly_desc">Bir şey değiştiyse pazar gecesi 23:59 civarında kaydeder.</string>
+    <string name="settings_autosave_last_saved">Son kayıt %1$s</string>
+    <string name="settings_autosave_failed">Son kayıt tamamlanmadı. Yeniden denenecek.</string>
+    <string name="settings_autosave_confirm_title">Otomatik kaydedilsin mi?</string>
+    <string name="settings_autosave_confirm_ml">Yüz tanıma ve arama verilerinizin şifreli bir kopyası arka planda Proton Drive\'ınıza kaydedilir ve güncel tutulur. Drive\'da alan kullanır; mobil veriyi yalnızca yedeklemelerin kullanmasına izin verilmişse kullanır. İlk kayıt şimdi başlar.</string>
+    <string name="settings_autosave_confirm_labels">Etiketlerinizin şifreli bir kopyası arka planda Proton Drive\'ınıza kaydedilir ve güncel tutulur. Drive\'da alan kullanır; mobil veriyi yalnızca yedeklemelerin kullanmasına izin verilmişse kullanır. İlk kayıt şimdi başlar.</string>
+    <string name="settings_autosave_confirm_on">Aç</string>
     <string name="settings_ml_drive_step_preparing">Hazırlanıyor…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Yüz verileri şifreleniyor…</string>
     <string name="settings_ml_drive_step_encrypting_search">Arama verileri şifreleniyor…</string>
@@ -978,6 +1000,7 @@
     <string name="album_rename_confirm">Yeniden adlandır</string>
     <string name="album_remove_from_album">Albümden kaldır</string>
     <string name="album_move_to_album">Albüme taşı</string>
+    <string name="album_add_to_other_album">Başka bir albüme ekle</string>
     <string name="album_moved_to_album">Taşındı: \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Paylaşılan bir albüme eklenen fotoğraflar albüm sahibine kopyalanır.</string>
     <string name="album_set_as_cover">Kapak yap</string>
@@ -1484,6 +1507,8 @@
     </plurals>
 
     <string name="gallery_on_this_day">Bu gün</string>
+    <string name="settings_on_this_day_range">Öncesi ve sonrası gün sayısı</string>
+    <string name="settings_on_this_day_range_desc">0 yalnızca günün kendisini gösterir. 1 ile 3 arası, öncesine ve sonrasına o kadar gün ekler.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">%1$d yıl önce</item>
         <item quantity="other">%1$d yıl önce</item>
@@ -2182,6 +2207,9 @@
     <string name="duplicates_filter_identical">Birebir aynı</string>
     <string name="duplicates_filter_similar">Benzer</string>
     <string name="duplicates_ignore_group">Yok say</string>
+    <string name="duplicates_delete_group">Grubu sil</string>
+    <string name="duplicates_confirm_title_whole">Tüm kopyalar silinsin mi?</string>
+    <string name="duplicates_confirm_message_whole">Grubu sil, o gruptaki her kopyayı kaldırır; bu yüzden o fotoğraflardan hiçbiri kalmaz. Seçili grupların dışındaki fotoğraflara dokunulmaz.</string>
     <string name="duplicates_unignore_group">Yok saymayı bırak</string>
     <string name="duplicates_filter_ignored_label">Yok sayılan gruplar</string>
     <string name="duplicates_filter_ignored">Yok sayılanları göster</string>
@@ -2293,5 +2321,31 @@
     <string name="whats_new_260_frame_body">Fotoğraf düzenleyicide bir fotoğrafı 1:1, 9:16 veya Polaroid gibi başka şekilli bir tuvale, bir renkle veya yumuşak bir bulanıklıkla doldurarak yerleştirin. Araç hâlâ geliştiriliyor ve yeni iyileştirmeler gelecek.</string>
     <string name="whats_new_260_drive_title">Drive\'da yüz ve arama verileri</string>
     <string name="whats_new_260_drive_body">Yüz adlarını ve arama verilerini Drive\'a kaydedin ve başka bir telefonda geri yükleyin; neyin geri geleceğini siz seçersiniz: “Ayarlar > Diğer ayarlar > Makine öğrenimi”.</string>
+    <string name="whats_new_260_autosave_title">Drive\'a otomatik kayıt</string>
+    <string name="whats_new_260_autosave_body">Yüz ve arama verilerinizin ya da etiketlerinizin Drive kopyasında “Otomatik kaydet” seçeneğini açın; kopya arka planda güncel kalır: değişikliklerden sonra, günlük veya haftalık. Bunları “Ayarlar > Diğer ayarlar” altında, “Makine öğrenimi” ve “Etiketler” bölümlerinde bulabilirsiniz.</string>
+    <string name="whats_new_260_worldmap_title">Daha zengin dünya haritası</string>
+    <string name="whats_new_260_worldmap_body">Dünya haritası artık ülke ve il sınırlarını çiziyor, fotoğraf çektiğiniz ili renklendiriyor, yaklaştıkça yerlerin adlarını gösteriyor ve klasik haritayla aynı iğneleri kullanıyor. Avrupa üzerinde açılır; kaydırırken ve sıkıştırırken parmaklarınızın altındaki nokta yerinde kalır.</string>
+    <string name="whats_new_260_time_title">Saat biçimi</string>
+    <string name="whats_new_260_time_body">Saatin nasıl gösterileceğini “Ayarlar > Görünüm ve dil > Saat biçimi” altından seçin: otomatik, 24 saatlik veya 12 saatlik; uygulama dilinden bağımsız. Otomatik, telefonun kendi saat ayarını izler.</string>
+    <string name="whats_new_260_onthisday_title">Öncesi ve sonrası gün sayısı</string>
+    <string name="whats_new_260_onthisday_body">“Bu gün” artık yalnızca günün kendisini gösterir. Öncesi ve sonrası için 0 ile 3 gün arasında seçimi “Ayarlar > Görünüm ve dil > Kitaplık > Zaman çizelgesi > Bu gün” altında yapın.</string>
+    <string name="whats_new_260_duplicates_title">Kopyaları inceleme</string>
+    <string name="whats_new_260_duplicates_body">Bir kopyayı, neyi sileceğinize karar vermeden önce sıkıştırarak, sürükleyerek veya çift dokunarak 6 kata kadar büyütün. “Grubu sil” bir grubun tüm kopyalarını tek seferde seçer.</string>
+    <string name="whats_new_260_intro_title">Test sürümü 1 dahil</string>
+    <string name="whats_new_260_intro_body">Bu sürüm, test sürümü 1\'deki her şeyi de içerir. Sonraki kartlar yalnızca o günden beri yeni olanı gösterir.</string>
+    <string name="whats_new_260_addalbum_title">Başka bir albüme ekle</string>
+    <string name="whats_new_260_addalbum_body">Bir albümde fotoğrafları seçin ve seçim çubuğunda “Başka bir albüme ekle” öğesini seçin. Fotoğraflar diğer albüme katılır, bu albümde de kalır; seçicide yeni bir albüm de oluşturabilirsiniz.</string>
+    <string name="whats_new_260_scans_title">Büyük kitaplıklar için taramalar</string>
+    <string name="whats_new_260_scans_body">Yüz binden fazla yüzü olan kitaplıklarda bekleyen yüzler artık gruplanmadan kalmak yerine mevcut kişilere partiler halinde yerleştirilir; yeniden denenmeyi bekleyen fotoğraflar uygulama kapansa da korunur.</string>
+    <string name="whats_new_260_dragselect_title">Kişilerde sürükleyerek seçim</string>
+    <string name="whats_new_260_dragselect_body">Bir kişinin sayfasında bir fotoğrafa uzun basın, sonra zaman çizelgesindeki ve albümlerdeki gibi bir aralık seçmek için sürükleyin.</string>
+    <string name="whats_new_260_mappins_title">Daha düzenli harita iğneleri</string>
+    <string name="whats_new_260_mappins_body">Klasik haritada ve dünya haritasında, daha büyük bir iğneyi örtecek iğne, sığacak kadar yakınlaştırana dek küçük bir nokta olarak görünür.</string>
+    <string name="whats_new_260_notif_title">Daha sakin bildirimler</string>
+    <string name="whats_new_260_notif_body">“Yeni fotoğraflar denetleniyor…” bildirimi, galeriye döndüğünüzde artık yanıp sönmez.</string>
+    <string name="whats_new_260_tiles_title">Geniş ekranlarda kutucuklar</string>
+    <string name="whats_new_260_tiles_body">Albümler sekmesinin üstündeki kısayol kutucukları geniş ekranda artık birbirinden uzaklaşmaz.</string>
+    <string name="whats_new_260_charging_title">Yalnızca şarj olurken</string>
+    <string name="whats_new_260_charging_body">Yüz tanıma ve fotoğraf arama taramalarının şarj cihazını beklemesi için “Ayarlar > Diğer ayarlar > Makine öğrenimi” altında “Yalnızca şarj olurken” seçeneğini açın. Duraklatılmış bir tarama bunu kartında belirtir.</string>
     <string name="whats_new_260_more">Ayrıca HEIC, GIF ve RAW için düzenlenebilir tarih, yok sayılabilen kopya grupları, haritada yer seçici, Türkçe ve çok sayıda başka düzeltme ve kararlılık iyileştirmesi.</string>
 </resources>

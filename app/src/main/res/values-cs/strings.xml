@@ -690,6 +690,7 @@
     <string name="album_rename_confirm">Přejmenovat</string>
     <string name="album_remove_from_album">Odebrat z alba</string>
     <string name="album_move_to_album">Přesunout do alba</string>
+    <string name="album_add_to_other_album">Přidat do jiného alba</string>
     <string name="album_moved_to_album">Přesunuto do \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Fotky přidané do sdíleného alba se zkopírují vlastníkovi alba.</string>
     <string name="op_moving_to_album">Přesouvání do alba…</string>
@@ -1122,6 +1123,8 @@
     <!-- "On this day" memories card on the Photos tab. Shown above the grid when the user
          has photos taken on TODAY's calendar date (same month + day) in earlier years. -->
     <string name="gallery_on_this_day">V tento den</string>
+    <string name="settings_on_this_day_range">Dní na každou stranu</string>
+    <string name="settings_on_this_day_range_desc">0 zobrazí jen samotný den. 1 až 3 přidají tolik dní před a po něm.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">Před %1$d rokem</item>
         <item quantity="few">Před %1$d lety</item>
@@ -1611,6 +1614,9 @@
     <string name="duplicates_filter_identical">Stejné</string>
     <string name="duplicates_filter_similar">Podobné</string>
     <string name="duplicates_ignore_group">Ignorovat</string>
+    <string name="duplicates_delete_group">Smazat skupinu</string>
+    <string name="duplicates_confirm_title_whole">Smazat všechny kopie?</string>
+    <string name="duplicates_confirm_message_whole">Smazání skupiny odstraní všechny kopie v dané skupině, takže žádná z těchto fotek nezůstane. Fotky mimo vybrané skupiny se nezmění.</string>
     <string name="duplicates_unignore_group">Přestat ignorovat</string>
     <string name="duplicates_filter_ignored_label">Ignorované skupiny</string>
     <string name="duplicates_filter_ignored">Zobrazit ignorované</string>
@@ -1834,6 +1840,14 @@
     <string name="settings_ai_indexing_paused_battery">Pozastaveno, nízká baterie</string>
     <string name="settings_ai_indexing_paused_warm">Pozastaveno, telefon je zahřátý</string>
     <string name="settings_ai_indexing_paused_power_save">Pozastaveno, spořič baterie je zapnutý</string>
+    <string name="settings_ai_charging_only">Jen při nabíjení</string>
+    <string name="settings_ai_charging_only_desc">Rozpoznávání obličejů a vyhledávání fotek čeká na nabíječku.</string>
+    <string name="settings_time_format">Formát času</string>
+    <string name="settings_time_format_auto">Automaticky</string>
+    <string name="settings_time_format_auto_desc">Řídí se 12- nebo 24hodinovým nastavením telefonu</string>
+    <string name="settings_time_format_24h">24hodinový</string>
+    <string name="settings_time_format_12h">12hodinový</string>
+    <string name="settings_ai_indexing_paused_not_charging">Pozastaveno, čeká se na nabíječku</string>
     <string name="settings_ai_indexing_paused_desc">Fotky se na obličeje neprohledávají, dokud nebudete pokračovat.</string>
     <string name="settings_ai_indexing_progress">%1$d z %2$d fotek</string>
     <plurals name="settings_ai_indexing_people">
@@ -1925,6 +1939,20 @@
     <string name="settings_ml_drive_save_desc">Uloží šifrovanou kopii, kterou mohou obnovit vaše další zařízení</string>
     <string name="settings_ml_drive_restore">Obnovit z Drive</string>
     <string name="settings_ml_drive_restore_desc">Použije data uložená jedním z vašich zařízení místo nového prohledávání</string>
+    <string name="settings_autosave_title">Ukládat automaticky</string>
+    <string name="settings_autosave_desc">Udržuje kopii na Disku aktuální na pozadí.</string>
+    <string name="settings_autosave_after_changes">Po změnách</string>
+    <string name="settings_autosave_daily">Denně</string>
+    <string name="settings_autosave_weekly">Týdně</string>
+    <string name="settings_autosave_after_changes_desc">Uloží asi 10 minut po poslední změně, nejvýše jednou za hodinu.</string>
+    <string name="settings_autosave_daily_desc">Uloží každou noc kolem 23:59, pokud se něco změnilo.</string>
+    <string name="settings_autosave_weekly_desc">Uloží v neděli v noci kolem 23:59, pokud se něco změnilo.</string>
+    <string name="settings_autosave_last_saved">Naposledy uloženo %1$s</string>
+    <string name="settings_autosave_failed">Poslední uložení se nedokončilo. Zkusí to znovu.</string>
+    <string name="settings_autosave_confirm_title">Ukládat automaticky?</string>
+    <string name="settings_autosave_confirm_ml">Šifrovaná kopie vašich dat rozpoznávání obličejů a vyhledávání se na pozadí ukládá do vašeho Proton Drive a udržuje se aktuální. Využívá místo na Disku a mobilní data jen tehdy, když je zálohy smějí používat. První uložení začne hned.</string>
+    <string name="settings_autosave_confirm_labels">Šifrovaná kopie vašich štítků se na pozadí ukládá do vašeho Proton Drive a udržuje se aktuální. Využívá místo na Disku a mobilní data jen tehdy, když je zálohy smějí používat. První uložení začne hned.</string>
+    <string name="settings_autosave_confirm_on">Zapnout</string>
     <string name="settings_ml_drive_step_preparing">Příprava…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Šifrování dat obličejů…</string>
     <string name="settings_ml_drive_step_encrypting_search">Šifrování dat vyhledávání…</string>
@@ -2500,5 +2528,31 @@
     <string name="whats_new_260_frame_body">V editoru fotek umístěte fotku na plátno jiného tvaru, třeba 1:1, 9:16 nebo Polaroid, vyplněné barvou nebo měkkým rozostřením. Nástroj je stále ve vývoji a další vylepšení přijdou.</string>
     <string name="whats_new_260_drive_title">Data obličejů a hledání na Drive</string>
     <string name="whats_new_260_drive_body">Uložte jména tváří a data hledání na Drive a obnovte je v jiném telefonu, přičemž si vyberete, co se vrátí, v „Nastavení > Další nastavení > Strojové učení“.</string>
+    <string name="whats_new_260_autosave_title">Automatické ukládání na Drive</string>
+    <string name="whats_new_260_autosave_body">Zapněte „Ukládat automaticky“ u kopie na Drive pro data tváří a hledání nebo pro štítky a kopie se bude na pozadí udržovat aktuální: po změnách, denně nebo týdně. Najdete je v „Nastavení > Další nastavení“, v částech „Strojové učení“ a „Štítky“.</string>
+    <string name="whats_new_260_worldmap_title">Bohatší mapa světa</string>
+    <string name="whats_new_260_worldmap_body">Mapa světa nově kreslí hranice států a provincií, vybarví provincii, kde jste fotili, při přibližování pojmenovává místa a ukazuje stejné špendlíky jako klasická mapa. Otevře se nad Evropou a při posouvání a roztahování zůstává bod pod prsty na místě.</string>
+    <string name="whats_new_260_time_title">Formát času</string>
+    <string name="whats_new_260_time_body">Jak se zobrazuje čas, zvolíte v „Nastavení > Vzhled a jazyk > Formát času“: automaticky, 24hodinový nebo 12hodinový, nezávisle na jazyce aplikace. Automaticky se řídí nastavením hodin telefonu.</string>
+    <string name="whats_new_260_onthisday_title">Dní na každou stranu</string>
+    <string name="whats_new_260_onthisday_body">„V tento den“ nově ukazuje jen samotný den. Počet dní před a po (0 až 3) zvolíte v „Nastavení > Vzhled a jazyk > Knihovna > Časová osa > V tento den“.</string>
+    <string name="whats_new_260_duplicates_title">Kontrola duplicit</string>
+    <string name="whats_new_260_duplicates_body">Sevřením, tažením nebo dvojitým klepnutím zvětšíte kopii až 6krát, než se rozhodnete, co smazat. „Smazat skupinu“ vybere najednou všechny kopie skupiny.</string>
+    <string name="whats_new_260_intro_title">Obsahuje testovací verzi 1</string>
+    <string name="whats_new_260_intro_body">Tato verze obsahuje i vše z testovací verze 1. Následující karty ukazují jen to, co je nového od té doby.</string>
+    <string name="whats_new_260_addalbum_title">Přidat do jiného alba</string>
+    <string name="whats_new_260_addalbum_body">Vyberte v albu fotky a zvolte „Přidat do jiného alba“ v liště výběru. Fotky se přidají do druhého alba a v tomto zůstanou, a ve výběru lze vytvořit i nové album.</string>
+    <string name="whats_new_260_scans_title">Skenování velkých knihoven</string>
+    <string name="whats_new_260_scans_body">U knihoven s více než sto tisíci tvářemi se čekající tváře nově řadí ke stávajícím osobám po dávkách, místo aby zůstaly nezařazené, a fotky čekající na opakování přežijí zavření aplikace.</string>
+    <string name="whats_new_260_dragselect_title">Výběr tažením u osob</string>
+    <string name="whats_new_260_dragselect_body">Podržte fotku na stránce osoby a tažením vyberte rozsah, stejně jako na časové ose a v albech.</string>
+    <string name="whats_new_260_mappins_title">Přehlednější špendlíky na mapě</string>
+    <string name="whats_new_260_mappins_body">Na klasické mapě i na mapě světa se špendlík, který by překrýval větší, zobrazí jako malá tečka, dokud nepřiblížíte tak, aby se vešel.</string>
+    <string name="whats_new_260_notif_title">Klidnější oznámení</string>
+    <string name="whats_new_260_notif_body">Oznámení „Kontrola nových fotek…“ už nebliká, když se vrátíte do galerie.</string>
+    <string name="whats_new_260_tiles_title">Dlaždice na širokém displeji</string>
+    <string name="whats_new_260_tiles_body">Dlaždice zkratek nahoře na kartě Alba se na širokém displeji už nerozjíždějí.</string>
+    <string name="whats_new_260_charging_title">Jen při nabíjení</string>
+    <string name="whats_new_260_charging_body">Zapněte „Jen při nabíjení“ v „Nastavení > Další nastavení > Strojové učení“, aby skenování tváří a hledání fotek čekalo na nabíječku. Pozastavené skenování to uvádí na své kartě.</string>
     <string name="whats_new_260_more">Navíc upravitelné datum u HEIC, GIF a RAW, skupiny duplicit, které lze ignorovat, výběr místa na mapě, turečtina a spousta dalších oprav a vylepšení stability.</string>
 </resources>

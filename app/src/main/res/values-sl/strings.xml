@@ -691,6 +691,7 @@
     <string name="album_rename_confirm">Preimenuj</string>
     <string name="album_remove_from_album">Odstrani iz albuma</string>
     <string name="album_move_to_album">Premakni v album</string>
+    <string name="album_add_to_other_album">Dodaj v drug album</string>
     <string name="album_moved_to_album">Premaknjeno v \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Fotografije, dodane v album v skupni rabi, se kopirajo lastniku albuma.</string>
     <string name="op_moving_to_album">Premikanje v album…</string>
@@ -1123,6 +1124,8 @@
     <!-- "On this day" memories card on the Photos tab. Shown above the grid when the user
          has photos taken on TODAY's calendar date (same month + day) in earlier years. -->
     <string name="gallery_on_this_day">Na ta dan</string>
+    <string name="settings_on_this_day_range">Dni pred in po</string>
+    <string name="settings_on_this_day_range_desc">0 prikaže samo ta dan. Od 1 do 3 doda toliko dni pred in po njem.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">pred %1$d letom</item>
         <item quantity="two">pred %1$d letoma</item>
@@ -1612,6 +1615,9 @@
     <string name="duplicates_filter_identical">Enake</string>
     <string name="duplicates_filter_similar">Podobne</string>
     <string name="duplicates_ignore_group">Ne upoštevaj</string>
+    <string name="duplicates_delete_group">Izbriši skupino</string>
+    <string name="duplicates_confirm_title_whole">Izbrišem vse kopije?</string>
+    <string name="duplicates_confirm_message_whole">Brisanje skupine odstrani vse kopije v tej skupini, zato nobena od teh fotografij ne ostane. Fotografije zunaj izbranih skupin ostanejo nedotaknjene.</string>
     <string name="duplicates_unignore_group">Upoštevaj znova</string>
     <string name="duplicates_filter_ignored_label">Neupoštevane skupine</string>
     <string name="duplicates_filter_ignored">Pokaži neupoštevane</string>
@@ -1833,6 +1839,14 @@
     <string name="settings_ai_indexing_paused_battery">Zaustavljeno, nizka baterija</string>
     <string name="settings_ai_indexing_paused_warm">Zaustavljeno, telefon je topel</string>
     <string name="settings_ai_indexing_paused_power_save">Zaustavljeno, varčevanje z energijo je vklopljeno</string>
+    <string name="settings_ai_charging_only">Samo med polnjenjem</string>
+    <string name="settings_ai_charging_only_desc">Prepoznavanje obrazov in iskanje fotografij počakata na polnilnik.</string>
+    <string name="settings_time_format">Oblika časa</string>
+    <string name="settings_time_format_auto">Samodejno</string>
+    <string name="settings_time_format_auto_desc">Upošteva telefonovo 12- ali 24-urno nastavitev</string>
+    <string name="settings_time_format_24h">24-urna</string>
+    <string name="settings_time_format_12h">12-urna</string>
+    <string name="settings_ai_indexing_paused_not_charging">Zaustavljeno, čaka na polnilnik</string>
     <string name="settings_ai_indexing_paused_desc">Fotografije se ne pregledujejo za obraze, dokler ne nadaljujete.</string>
     <string name="settings_ai_indexing_progress">%1$d od %2$d fotografij</string>
     <plurals name="settings_ai_indexing_people">
@@ -1924,6 +1938,20 @@
     <string name="settings_ml_drive_save_desc">Shrani šifrirano kopijo, ki jo lahko obnovijo vaše druge naprave</string>
     <string name="settings_ml_drive_restore">Obnovi iz Drive</string>
     <string name="settings_ml_drive_restore_desc">Uporabi podatke, ki jih je shranila ena od vaših naprav, namesto ponovnega pregledovanja</string>
+    <string name="settings_autosave_title">Samodejno shranjevanje</string>
+    <string name="settings_autosave_desc">Ohranja kopijo v Driveu posodobljeno v ozadju.</string>
+    <string name="settings_autosave_after_changes">Po spremembah</string>
+    <string name="settings_autosave_daily">Dnevno</string>
+    <string name="settings_autosave_weekly">Tedensko</string>
+    <string name="settings_autosave_after_changes_desc">Shrani približno 10 minut po zadnji spremembi, največ enkrat na uro.</string>
+    <string name="settings_autosave_daily_desc">Shrani vsako noč okoli 23:59, če se je kaj spremenilo.</string>
+    <string name="settings_autosave_weekly_desc">Shrani v nedeljo zvečer okoli 23:59, če se je kaj spremenilo.</string>
+    <string name="settings_autosave_last_saved">Nazadnje shranjeno %1$s</string>
+    <string name="settings_autosave_failed">Zadnje shranjevanje se ni dokončalo. Poskusilo bo znova.</string>
+    <string name="settings_autosave_confirm_title">Samodejno shraniti?</string>
+    <string name="settings_autosave_confirm_ml">Šifrirana kopija vaših podatkov o prepoznavanju obrazov in iskanju se v ozadju shranjuje v vaš Proton Drive in ostaja posodobljena. Porablja prostor v Driveu, mobilne podatke pa le, če jih smejo uporabljati varnostne kopije. Prvo shranjevanje se začne zdaj.</string>
+    <string name="settings_autosave_confirm_labels">Šifrirana kopija vaših oznak se v ozadju shranjuje v vaš Proton Drive in ostaja posodobljena. Porablja prostor v Driveu, mobilne podatke pa le, če jih smejo uporabljati varnostne kopije. Prvo shranjevanje se začne zdaj.</string>
+    <string name="settings_autosave_confirm_on">Vklopi</string>
     <string name="settings_ml_drive_step_preparing">Pripravljanje…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Šifriranje podatkov o obrazih…</string>
     <string name="settings_ml_drive_step_encrypting_search">Šifriranje podatkov o iskanju…</string>
@@ -2494,5 +2522,31 @@
     <string name="whats_new_260_frame_body">V urejevalniku fotografij postavite fotografijo na platno druge oblike, na primer 1:1, 9:16 ali Polaroid, zapolnjeno z barvo ali mehkim zameglenjem. Orodje je še v nastajanju in prihajajo nove izboljšave.</string>
     <string name="whats_new_260_drive_title">Podatki o obrazih in iskanju v Drive</string>
     <string name="whats_new_260_drive_body">Imena obrazov in podatke iskanja shranite v Drive in jih obnovite na drugem telefonu, pri čemer izberete, kaj se vrne, v „Nastavitve > Več nastavitev > Strojno učenje“.</string>
+    <string name="whats_new_260_autosave_title">Samodejno shranjevanje v Drive</string>
+    <string name="whats_new_260_autosave_body">Vklopite „Samodejno shranjevanje“ pri kopiji v Drive za podatke obrazov in iskanja ali za oznake, pa se kopija v ozadju ohranja posodobljena: po spremembah, dnevno ali tedensko. Najdete jih v „Nastavitve > Več nastavitev“, pod „Strojno učenje“ in „Oznake“.</string>
+    <string name="whats_new_260_worldmap_title">Bogatejši zemljevid sveta</string>
+    <string name="whats_new_260_worldmap_body">Zemljevid sveta zdaj riše meje držav in pokrajin, obarva pokrajino, kjer ste fotografirali, ob približevanju poimenuje kraje in kaže iste žebljičke kot klasični zemljevid. Odpre se nad Evropo, pri premikanju in ščipanju pa točka pod prsti ostane na mestu.</string>
+    <string name="whats_new_260_time_title">Oblika časa</string>
+    <string name="whats_new_260_time_body">Kako se prikaže čas, izberete v „Nastavitve > Videz in jezik > Oblika časa“: samodejno, 24-urno ali 12-urno, neodvisno od jezika aplikacije. Samodejno sledi nastavitvi ure telefona.</string>
+    <string name="whats_new_260_onthisday_title">Dni pred in po</string>
+    <string name="whats_new_260_onthisday_body">„Na ta dan“ zdaj prikaže le sam dan. Od 0 do 3 dni pred in po izberete v „Nastavitve > Videz in jezik > Knjižnica > Časovnica > Na ta dan“.</string>
+    <string name="whats_new_260_duplicates_title">Pregled dvojnikov</string>
+    <string name="whats_new_260_duplicates_body">S ščipanjem, vlečenjem ali dvojnim tapom povečate kopijo do 6-krat, preden se odločite, kaj izbrisati. „Izbriši skupino“ izbere vse kopije skupine naenkrat.</string>
+    <string name="whats_new_260_intro_title">Vključuje testno različico 1</string>
+    <string name="whats_new_260_intro_body">Ta različica vsebuje tudi vse iz testne različice 1. Naslednje kartice kažejo samo, kar je novega od takrat.</string>
+    <string name="whats_new_260_addalbum_title">Dodaj v drug album</string>
+    <string name="whats_new_260_addalbum_body">V albumu izberite fotografije in izberite „Dodaj v drug album“ v vrstici izbire. Pridružijo se drugemu albumu in ostanejo v tem, v izbirniku pa lahko ustvarite tudi nov album.</string>
+    <string name="whats_new_260_scans_title">Skeniranje velikih knjižnic</string>
+    <string name="whats_new_260_scans_body">Pri knjižnicah z več kot sto tisoč obrazi se čakajoči obrazi zdaj v skupinah dodelijo obstoječim osebam, namesto da ostanejo nerazvrščeni, fotografije, ki čakajo na ponovni poskus, pa preživijo zaprtje aplikacije.</string>
+    <string name="whats_new_260_dragselect_title">Izbiranje z vlečenjem pri osebah</string>
+    <string name="whats_new_260_dragselect_body">Dolgo pritisnite fotografijo na strani osebe in povlecite za izbiro obsega, kot na časovnici in v albumih.</string>
+    <string name="whats_new_260_mappins_title">Bolj urejeni žebljički na zemljevidu</string>
+    <string name="whats_new_260_mappins_body">Na klasičnem zemljevidu in zemljevidu sveta se žebljiček, ki bi prekril večjega, prikaže kot majhna pika, dokler ne približate dovolj, da ima prostor.</string>
+    <string name="whats_new_260_notif_title">Mirnejša obvestila</string>
+    <string name="whats_new_260_notif_body">Obvestilo „Preverjanje novih fotografij…“ ne utripa več, ko se vrnete v galerijo.</string>
+    <string name="whats_new_260_tiles_title">Ploščice na širokih zaslonih</string>
+    <string name="whats_new_260_tiles_body">Ploščice bližnjic na vrhu zavihka Albumi se na širokem zaslonu ne razmikajo več.</string>
+    <string name="whats_new_260_charging_title">Samo med polnjenjem</string>
+    <string name="whats_new_260_charging_body">Vklopite „Samo med polnjenjem“ v „Nastavitve > Več nastavitev > Strojno učenje“, da skeniranje obrazov in iskanja fotografij počaka na polnilec. Začasno ustavljeno skeniranje to navede na svoji kartici.</string>
     <string name="whats_new_260_more">Poleg tega urejljivi datumi pri HEIC, GIF in RAW, skupine dvojnikov, ki jih lahko prezrete, izbira kraja na zemljevidu, turščina in še veliko popravkov ter izboljšav stabilnosti.</string>
 </resources>

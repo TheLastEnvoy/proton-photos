@@ -46,6 +46,10 @@ object SettingsKeys {
     /** When false, the gallery hides the "On this day" memories carousel. Default true. */
     val SHOW_ON_THIS_DAY = booleanPreferencesKey("show_on_this_day")
 
+    /** How many whole days either side of today's date count as "On this day", 0 to 3. Absent reads as 0:
+     *  only the day itself. */
+    val ON_THIS_DAY_WINDOW_DAYS = intPreferencesKey("on_this_day_window_days")
+
     /** When true, a floating month/year label fades in over the Photos timeline while it is
      *  actively scrolling, giving a time reference for the topmost visible photo. Off by default. */
     val SHOW_SCROLL_DATE = booleanPreferencesKey("show_scroll_date")
@@ -264,6 +268,10 @@ object SettingsKeys {
     val ALBUMS_TILE_HIDDEN = stringSetPreferencesKey("albums_tile_hidden")
 
     val LANGUAGE = stringPreferencesKey("language")
+
+    /** How the time of day is written: [eu.akoos.photos.presentation.util.ClockFormat] key `auto`, `24h` or
+     *  `12h`. Absent = auto, the phone's own 12 or 24 hour setting. Independent of [LANGUAGE]. */
+    val CLOCK_FORMAT = stringPreferencesKey("clock_format")
 
     /** Which top-level gallery tab opens on app start: 0 = Photos, 1 = Albums, 2 = Shared.
      *  Default 0 keeps the historical Photos-first behaviour. Applied once per cold start;
@@ -866,6 +874,13 @@ object SettingsKeys {
      * on it can turn it off from Settings and have it stay off until they turn it back on.
      */
     val FACE_INDEXING_PAUSED = booleanPreferencesKey("face_indexing_paused")
+
+    /**
+     * When true, the face and photo-search scans run only while the phone is on external power. Absent
+     * (the default) reads as OFF, so the scans run on battery as before, under the usual battery,
+     * heat and power-saver limits. Backups and the other background jobs ignore it.
+     */
+    val ML_ONLY_WHILE_CHARGING = booleanPreferencesKey("ml_only_while_charging")
 
     /**
      * When true, the face scan automatically merges each named person's closest look-alike cluster (the

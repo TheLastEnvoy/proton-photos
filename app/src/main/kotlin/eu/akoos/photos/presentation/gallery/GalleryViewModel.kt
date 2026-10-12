@@ -115,6 +115,7 @@ import eu.akoos.photos.util.MetadataStripConfig
 import eu.akoos.photos.util.looksLikeNetworkError
 import eu.akoos.photos.util.sanitizeErrorMessage
 import eu.akoos.photos.util.computeOnThisDay
+import eu.akoos.photos.util.onThisDayWindowDays
 import eu.akoos.photos.util.isBatteryLow
 import eu.akoos.photos.util.retryOnDbTear
 import eu.akoos.photos.worker.SyncWorker
@@ -328,6 +329,10 @@ class GalleryViewModel @Inject constructor(
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /** The user's "days either side" choice for the "On this day" carousel. */
+    private val onThisDayWindow: StateFlow<Int> = context.onThisDayWindowDays()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
     /** Avatar dot tap → re-run a check, which re-opens the update dialog if an update is still
      *  available (the Activity's UpdaterHost renders it). Works after a relaunch where the in-memory
      *  pending update was lost but the dot is lit from the persisted marker. */
@@ -354,6 +359,15 @@ class GalleryViewModel @Inject constructor(
     private val syncInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
     init {
+        // A change of the range regroups the carousel from the library already on screen.
+        viewModelScope.launch {
+            onThisDayWindow.collect { days ->
+                val items = _uiState.value.items
+                if (items.isEmpty()) return@collect
+                val groups = withContext(Dispatchers.Default) { computeOnThisDay(items, days) }
+                _uiState.update { it.copy(onThisDayGroups = groups) }
+            }
+        }
         // A photo stranded between hidden and visible is missing from THIS screen, and the person
         // looking for it has no reason to open the hidden area, which was the only place the repair
         // ran. It belongs where the absence shows.
@@ -907,7 +921,7 @@ class GalleryViewModel @Inject constructor(
                     // filter-independent source (the grid binds allItems = state.items).
                     val monthGroups = groupByMonth(filtered)
                     val dayGroups = groupByDay(filtered)
-                    val onThisDay = computeOnThisDay(items)
+                    val onThisDay = computeOnThisDay(items, onThisDayWindow.value)
                     GalleryComputed(items, filtered, monthGroups, dayGroups, onThisDay)
                 }
                 // Feed the library size into the perf diagnostics buffer (count only, no content)
@@ -1324,10 +1338,15 @@ class GalleryViewModel @Inject constructor(
                 }
                 reconcile(userId).collect {}
                 // Enqueue the upload on the worker rather than running it inline in viewModelScope:
-                // the worker is the sole upload owner so the in-app cancel can actually stop it.
-                val wifiOnly = context.settingsDataStore.data
-                    .map { it[SettingsKeys.SYNC_WIFI_ONLY] != false }.first()
-                SyncWorker.runNow(context, wifiOnly)
+                // the worker is the sole upload owner so the in-app cancel can actually stop it. Only
+                // when something is queued: the worker shows its "Checking for new photos" notification
+                // the moment it starts, so waking it with nothing to upload flashed that notification
+                // every time the gallery was entered again (for instance on leaving the search).
+                if (syncStateRepo.countPendingUploads(userId).first() > 0) {
+                    val wifiOnly = context.settingsDataStore.data
+                        .map { it[SettingsKeys.SYNC_WIFI_ONLY] != false }.first()
+                    SyncWorker.runNow(context, wifiOnly)
+                }
             }.onFailure { e ->
                 // Silent-swallow for network-shaped failures — the avatar offline dot
                 // and the dismissible offline banner already tell the user what's wrong;

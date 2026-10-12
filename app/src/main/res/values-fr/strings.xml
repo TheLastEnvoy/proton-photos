@@ -480,6 +480,7 @@
     <string name="album_rename_confirm">Renommer</string>
     <string name="album_remove_from_album">Retirer de l\'album</string>
     <string name="album_move_to_album">Déplacer vers l\'album</string>
+    <string name="album_add_to_other_album">Ajouter à un autre album</string>
     <string name="album_moved_to_album">Déplacé vers \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Les photos ajoutées à un album partagé sont copiées vers le propriétaire de l\'album.</string>
     <string name="op_moving_to_album">Déplacement vers l\'album…</string>
@@ -869,6 +870,8 @@
     </plurals>
 
     <string name="gallery_on_this_day">Ce jour-là</string>
+    <string name="settings_on_this_day_range">Jours avant et après</string>
+    <string name="settings_on_this_day_range_desc">0 n\'affiche que le jour même. De 1 à 3 ajoutent autant de jours avant et après.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">il y a %1$d an</item>
         <item quantity="other">il y a %1$d ans</item>
@@ -1535,6 +1538,9 @@
     <string name="duplicates_filter_identical">Identiques</string>
     <string name="duplicates_filter_similar">Similaires</string>
     <string name="duplicates_ignore_group">Ignorer</string>
+    <string name="duplicates_delete_group">Supprimer le groupe</string>
+    <string name="duplicates_confirm_title_whole">Supprimer toutes les copies ?</string>
+    <string name="duplicates_confirm_message_whole">Supprimer le groupe efface toutes les copies de ce groupe, donc aucune de ces photos ne reste. Les photos hors des groupes sélectionnés ne sont pas touchées.</string>
     <string name="duplicates_unignore_group">Ne plus ignorer</string>
     <string name="duplicates_filter_ignored_label">Groupes ignorés</string>
     <string name="duplicates_filter_ignored">Afficher les ignorés</string>
@@ -1747,6 +1753,14 @@
     <string name="settings_ai_indexing_paused_battery">En pause, batterie faible</string>
     <string name="settings_ai_indexing_paused_warm">En pause, le téléphone est chaud</string>
     <string name="settings_ai_indexing_paused_power_save">En pause, l\'économiseur d\'énergie est activé</string>
+    <string name="settings_ai_charging_only">Uniquement pendant la charge</string>
+    <string name="settings_ai_charging_only_desc">La reconnaissance des visages et la recherche de photos attendent le chargeur.</string>
+    <string name="settings_time_format">Format de l\'heure</string>
+    <string name="settings_time_format_auto">Automatique</string>
+    <string name="settings_time_format_auto_desc">Suit le réglage 12 ou 24 heures du téléphone</string>
+    <string name="settings_time_format_24h">24 heures</string>
+    <string name="settings_time_format_12h">12 heures</string>
+    <string name="settings_ai_indexing_paused_not_charging">En pause, en attente du chargeur</string>
     <string name="settings_ai_indexing_paused_desc">Les photos ne sont pas analysées pour y trouver des visages tant que vous ne reprenez pas.</string>
     <string name="settings_ai_indexing_progress">%1$d sur %2$d photos</string>
     <plurals name="settings_ai_indexing_people">
@@ -1836,6 +1850,20 @@
     <string name="settings_ml_drive_save_desc">Enregistre une copie chiffrée que vos autres appareils peuvent restaurer</string>
     <string name="settings_ml_drive_restore">Restaurer depuis Drive</string>
     <string name="settings_ml_drive_restore_desc">Utilise les données enregistrées par un de vos appareils au lieu de tout réanalyser</string>
+    <string name="settings_autosave_title">Enregistrer automatiquement</string>
+    <string name="settings_autosave_desc">Garde la copie sur Drive à jour en arrière-plan.</string>
+    <string name="settings_autosave_after_changes">Après les modifications</string>
+    <string name="settings_autosave_daily">Chaque jour</string>
+    <string name="settings_autosave_weekly">Chaque semaine</string>
+    <string name="settings_autosave_after_changes_desc">Enregistre environ 10 minutes après la dernière modification, au plus une fois par heure.</string>
+    <string name="settings_autosave_daily_desc">Enregistre chaque nuit vers 23:59 si quelque chose a changé.</string>
+    <string name="settings_autosave_weekly_desc">Enregistre le dimanche soir vers 23:59 si quelque chose a changé.</string>
+    <string name="settings_autosave_last_saved">Dernier enregistrement %1$s</string>
+    <string name="settings_autosave_failed">Le dernier enregistrement ne s\'est pas terminé. Une nouvelle tentative aura lieu.</string>
+    <string name="settings_autosave_confirm_title">Enregistrer automatiquement ?</string>
+    <string name="settings_autosave_confirm_ml">Une copie chiffrée de vos données de reconnaissance des visages et de recherche est enregistrée dans votre Proton Drive en arrière-plan et tenue à jour. Elle utilise de l\'espace sur Drive, et des données mobiles uniquement si les sauvegardes y sont autorisées. Le premier enregistrement démarre maintenant.</string>
+    <string name="settings_autosave_confirm_labels">Une copie chiffrée de vos étiquettes est enregistrée dans votre Proton Drive en arrière-plan et tenue à jour. Elle utilise de l\'espace sur Drive, et des données mobiles uniquement si les sauvegardes y sont autorisées. Le premier enregistrement démarre maintenant.</string>
+    <string name="settings_autosave_confirm_on">Activer</string>
     <string name="settings_ml_drive_step_preparing">Préparation…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Chiffrement des données des visages…</string>
     <string name="settings_ml_drive_step_encrypting_search">Chiffrement des données de recherche…</string>
@@ -2378,5 +2406,31 @@
     <string name="whats_new_260_frame_body">Dans l\'éditeur de photos, placez une photo sur un canevas d\'une autre forme, comme 1:1, 9:16 ou Polaroid, rempli d\'une couleur ou d\'un flou doux. L\'outil est encore en cours de développement et d\'autres améliorations arrivent.</string>
     <string name="whats_new_260_drive_title">Données de visages et de recherche sur Drive</string>
     <string name="whats_new_260_drive_body">Sauvegardez les noms des visages et les données de recherche sur Drive et restaurez-les sur un autre téléphone, en choisissant ce qui revient, dans « Paramètres > Autres réglages > Apprentissage automatique ».</string>
+    <string name="whats_new_260_autosave_title">Enregistrement automatique sur Drive</string>
+    <string name="whats_new_260_autosave_body">Activez « Enregistrer automatiquement » sur la copie Drive de vos données de visages et de recherche ou de vos étiquettes : la copie reste à jour en arrière-plan, après les modifications, chaque jour ou chaque semaine. Vous les trouverez dans « Paramètres > Autres réglages », sous « Apprentissage automatique » et « Étiquettes ».</string>
+    <string name="whats_new_260_worldmap_title">Une carte du monde plus riche</string>
+    <string name="whats_new_260_worldmap_body">La carte du monde dessine désormais les frontières des pays et des provinces, colore la province où vous avez pris des photos, nomme les lieux quand vous zoomez et affiche les mêmes repères que la carte classique. Elle s\'ouvre sur l\'Europe, et en la déplaçant ou en pinçant, le point sous vos doigts reste en place.</string>
+    <string name="whats_new_260_time_title">Format de l\'heure</string>
+    <string name="whats_new_260_time_body">Choisissez l\'affichage de l\'heure dans « Paramètres > Apparence &amp; langue > Format de l\'heure » : automatique, 24 heures ou 12 heures, indépendamment de la langue de l\'appli. Automatique suit le réglage d\'horloge du téléphone.</string>
+    <string name="whats_new_260_onthisday_title">Jours avant et après</string>
+    <string name="whats_new_260_onthisday_body">« Ce jour-là » n\'affiche plus que le jour lui-même. Choisissez de 0 à 3 jours avant et après dans « Paramètres > Apparence &amp; langue > Bibliothèque > Fil > Ce jour-là ».</string>
+    <string name="whats_new_260_duplicates_title">Revue des doublons</string>
+    <string name="whats_new_260_duplicates_body">Pincez, faites glisser ou touchez deux fois pour agrandir une copie jusqu\'à 6 fois avant de décider quoi supprimer. « Supprimer le groupe » sélectionne d\'un coup toutes les copies d\'un groupe.</string>
+    <string name="whats_new_260_intro_title">Inclut la version de test 1</string>
+    <string name="whats_new_260_intro_body">Cette version contient aussi tout ce qu\'apportait la version de test 1. Les cartes suivantes ne montrent que les nouveautés depuis.</string>
+    <string name="whats_new_260_addalbum_title">Ajouter à un autre album</string>
+    <string name="whats_new_260_addalbum_body">Sélectionnez des photos dans un album et choisissez « Ajouter à un autre album » dans la barre de sélection. Elles rejoignent l\'autre album et restent dans celui-ci, et le sélecteur permet de créer un nouvel album.</string>
+    <string name="whats_new_260_scans_title">Analyses des grandes bibliothèques</string>
+    <string name="whats_new_260_scans_body">Dans les bibliothèques de plus de cent mille visages, les visages en attente sont désormais rattachés par lots aux personnes existantes au lieu de rester non regroupés, et les photos en attente d\'un nouvel essai survivent à la fermeture de l\'appli.</string>
+    <string name="whats_new_260_dragselect_title">Sélection par glissement chez les personnes</string>
+    <string name="whats_new_260_dragselect_body">Appuyez longuement sur une photo dans la page d\'une personne, puis glissez pour sélectionner une plage, comme dans le fil et les albums.</string>
+    <string name="whats_new_260_mappins_title">Repères de carte plus nets</string>
+    <string name="whats_new_260_mappins_body">Sur la carte classique et sur la carte du monde, un repère qui en recouvrirait un plus grand s\'affiche comme un petit point jusqu\'à ce que vous zoomiez assez pour qu\'il ait de la place.</string>
+    <string name="whats_new_260_notif_title">Notifications plus calmes</string>
+    <string name="whats_new_260_notif_body">La notification « Recherche de nouvelles photos… » ne clignote plus quand vous revenez à la galerie.</string>
+    <string name="whats_new_260_tiles_title">Vignettes sur grands écrans</string>
+    <string name="whats_new_260_tiles_body">Les vignettes de raccourcis en haut de l\'onglet Albums ne s\'écartent plus sur un écran large.</string>
+    <string name="whats_new_260_charging_title">Uniquement pendant la charge</string>
+    <string name="whats_new_260_charging_body">Activez « Uniquement pendant la charge » dans « Paramètres > Autres réglages > Apprentissage automatique » pour que les analyses des visages et de la recherche de photos attendent le chargeur. Une analyse en pause l\'indique sur sa carte.</string>
     <string name="whats_new_260_more">Et aussi des dates modifiables pour HEIC, GIF et RAW, des groupes de doublons à ignorer, un sélecteur de lieu sur la carte, le turc et de nombreuses autres corrections et améliorations de stabilité.</string>
 </resources>

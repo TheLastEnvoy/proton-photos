@@ -825,6 +825,14 @@
     <string name="settings_ai_indexing_paused_battery">Paused, battery low</string>
     <string name="settings_ai_indexing_paused_warm">Paused, phone is warm</string>
     <string name="settings_ai_indexing_paused_power_save">Paused, power saver is on</string>
+    <string name="settings_ai_charging_only">Only while charging</string>
+    <string name="settings_ai_charging_only_desc">Face recognition and photo search scans wait for the charger.</string>
+    <string name="settings_time_format">Time format</string>
+    <string name="settings_time_format_auto">Automatic</string>
+    <string name="settings_time_format_auto_desc">Follows the phone\'s 12 or 24 hour setting</string>
+    <string name="settings_time_format_24h">24-hour</string>
+    <string name="settings_time_format_12h">12-hour</string>
+    <string name="settings_ai_indexing_paused_not_charging">Paused, waiting for the charger</string>
     <string name="settings_ai_indexing_paused_desc">Photos are not scanned for faces until you resume.</string>
     <string name="settings_ai_indexing_progress">%1$d of %2$d photos</string>
     <plurals name="settings_ai_indexing_people">
@@ -840,6 +848,20 @@
     <string name="settings_ml_drive_save_desc">Keep an encrypted copy your other devices can restore</string>
     <string name="settings_ml_drive_restore">Restore from Drive</string>
     <string name="settings_ml_drive_restore_desc">Use data saved by one of your devices instead of scanning again</string>
+    <string name="settings_autosave_title">Save automatically</string>
+    <string name="settings_autosave_desc">Keeps the Drive copy up to date in the background.</string>
+    <string name="settings_autosave_after_changes">After changes</string>
+    <string name="settings_autosave_daily">Daily</string>
+    <string name="settings_autosave_weekly">Weekly</string>
+    <string name="settings_autosave_after_changes_desc">Saves about 10 minutes after the last change, at most once an hour.</string>
+    <string name="settings_autosave_daily_desc">Saves every night around 23:59 when something changed.</string>
+    <string name="settings_autosave_weekly_desc">Saves on Sunday night around 23:59 when something changed.</string>
+    <string name="settings_autosave_last_saved">Last saved %1$s</string>
+    <string name="settings_autosave_failed">The last save did not finish. It will try again.</string>
+    <string name="settings_autosave_confirm_title">Save automatically?</string>
+    <string name="settings_autosave_confirm_ml">An encrypted copy of your face and search data is saved to your Proton Drive in the background and kept up to date. It uses Drive storage, and mobile data only if backups may use it. The first save starts now.</string>
+    <string name="settings_autosave_confirm_labels">An encrypted copy of your labels is saved to your Proton Drive in the background and kept up to date. It uses Drive storage, and mobile data only if backups may use it. The first save starts now.</string>
+    <string name="settings_autosave_confirm_on">Turn on</string>
     <string name="settings_ml_drive_step_preparing">Preparing…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Encrypting face data…</string>
     <string name="settings_ml_drive_step_encrypting_search">Encrypting search data…</string>
@@ -1027,6 +1049,7 @@
     <string name="album_rename_confirm">Rename</string>
     <string name="album_remove_from_album">Remove from album</string>
     <string name="album_move_to_album">Move to album</string>
+    <string name="album_add_to_other_album">Add to another album</string>
     <string name="album_moved_to_album">Moved to \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Photos added to a shared album are copied to the album owner.</string>
     <string name="album_set_as_cover">Set as cover</string>
@@ -1573,6 +1596,8 @@
     <!-- "On this day" memories card on the Photos tab. Shown above the grid when the user
          has photos taken on TODAY's calendar date (same month + day) in earlier years. -->
     <string name="gallery_on_this_day">On this day</string>
+    <string name="settings_on_this_day_range">Days either side</string>
+    <string name="settings_on_this_day_range_desc">0 shows only the day itself. 1 to 3 add that many days before and after it.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">%1$d year ago</item>
         <item quantity="other">%1$d years ago</item>
@@ -2299,6 +2324,9 @@
     <string name="duplicates_filter_identical">Identical</string>
     <string name="duplicates_filter_similar">Similar</string>
     <string name="duplicates_ignore_group">Ignore</string>
+    <string name="duplicates_delete_group">Delete group</string>
+    <string name="duplicates_confirm_title_whole">Delete every copy?</string>
+    <string name="duplicates_confirm_message_whole">Delete group removes every copy in that group, so none of those photos stays. Photos outside the selected groups are not touched.</string>
     <string name="duplicates_unignore_group">Stop ignoring</string>
     <string name="duplicates_filter_ignored_label">Ignored groups</string>
     <string name="duplicates_filter_ignored">Show ignored</string>
@@ -2416,5 +2444,31 @@
     <string name="whats_new_260_frame_body">In the photo editor, place a photo on a canvas of another shape, such as 1:1, 9:16 or Polaroid, filled with a colour or a soft blur. The tool is still in progress, and more improvements are on the way.</string>
     <string name="whats_new_260_drive_title">Face and search data in Drive</string>
     <string name="whats_new_260_drive_body">Save your face names and search data to Drive and restore them on another phone, choosing what comes back, under “Settings > More settings > Machine learning”.</string>
+    <string name="whats_new_260_autosave_title">Automatic Drive saves</string>
+    <string name="whats_new_260_autosave_body">Turn on “Save automatically” on the Drive copy of your face and search data or of your labels, and the copy stays up to date in the background: after changes, daily or weekly. Find them under “Settings > More settings”, in “Machine learning” and “Labels”.</string>
+    <string name="whats_new_260_worldmap_title">A richer world map</string>
+    <string name="whats_new_260_worldmap_body">The world map now draws country and province borders, tints the province where you took photos, names places as you zoom in and shows the same pins as the classic map. It opens over Europe, and moving and pinching keep the spot under your fingers.</string>
+    <string name="whats_new_260_time_title">Time format</string>
+    <string name="whats_new_260_time_body">Choose how times are shown under “Settings > Appearance &amp; Language > Time format”: automatic, 24-hour or 12-hour, apart from the app language. Automatic follows your phone\'s own clock setting.</string>
+    <string name="whats_new_260_onthisday_title">Days either side</string>
+    <string name="whats_new_260_onthisday_body">“On this day” now shows only the day itself. Choose 0 to 3 days either side under “Settings > Appearance &amp; Language > Library > Timeline > On this day”.</string>
+    <string name="whats_new_260_duplicates_title">Duplicate review</string>
+    <string name="whats_new_260_duplicates_body">Pinch, drag or double tap to enlarge a copy up to 6x before you decide what to delete. “Delete group” selects every copy of a group at once.</string>
+    <string name="whats_new_260_intro_title">Includes test build 1</string>
+    <string name="whats_new_260_intro_body">This build also contains everything from test build 1. The cards that follow show only what is new since then.</string>
+    <string name="whats_new_260_addalbum_title">Add to another album</string>
+    <string name="whats_new_260_addalbum_body">Select photos in an album and choose “Add to another album” in the selection bar. They join the other album and stay in this one, and the picker can create a new album.</string>
+    <string name="whats_new_260_scans_title">Scans for big libraries</string>
+    <string name="whats_new_260_scans_body">Libraries with over a hundred thousand faces now get their waiting faces placed on the existing people in batches instead of being left ungrouped, and photos waiting for a retry survive the app being closed.</string>
+    <string name="whats_new_260_dragselect_title">Drag to select in a person\'s page</string>
+    <string name="whats_new_260_dragselect_body">Long-press a photo on a person\'s page, then drag to select a range, like in the timeline and albums.</string>
+    <string name="whats_new_260_mappins_title">Tidier map pins</string>
+    <string name="whats_new_260_mappins_body">On the classic map and the world map, a pin that would overlap a bigger one shows as a small dot until you zoom in and it has room.</string>
+    <string name="whats_new_260_notif_title">Calmer notifications</string>
+    <string name="whats_new_260_notif_body">The “Checking for new photos…” notification no longer flashes when you come back to the gallery.</string>
+    <string name="whats_new_260_tiles_title">Shortcut tiles on wide screens</string>
+    <string name="whats_new_260_tiles_body">The shortcut tiles at the top of the Albums tab no longer stretch apart on a wide screen.</string>
+    <string name="whats_new_260_charging_title">Only while charging</string>
+    <string name="whats_new_260_charging_body">Turn on “Only while charging” under “Settings > More settings > Machine learning” to let face recognition and photo search scans wait for the charger. A paused scan says so on its card.</string>
     <string name="whats_new_260_more">Plus editable dates for HEIC, GIF and RAW photos, duplicate groups you can ignore, a map place picker, Turkish, and lots more fixes and stability improvements.</string>
 </resources>

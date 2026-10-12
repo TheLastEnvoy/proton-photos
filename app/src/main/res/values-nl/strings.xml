@@ -530,6 +530,7 @@
     <string name="album_rename_confirm">Hernoemen</string>
     <string name="album_remove_from_album">Uit album verwijderen</string>
     <string name="album_move_to_album">Naar album verplaatsen</string>
+    <string name="album_add_to_other_album">Toevoegen aan ander album</string>
     <string name="album_moved_to_album">Verplaatst naar \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Foto\'s die aan een gedeeld album worden toegevoegd, worden naar de albumeigenaar gekopieerd.</string>
     <string name="op_moving_to_album">Naar album verplaatsen…</string>
@@ -925,6 +926,8 @@
     <!-- "On this day" memories card on the Photos tab. Shown above the grid when the user
          has photos taken on TODAY's calendar date (same month + day) in earlier years. -->
     <string name="gallery_on_this_day">Op deze dag</string>
+    <string name="settings_on_this_day_range">Dagen ervoor en erna</string>
+    <string name="settings_on_this_day_range_desc">0 toont alleen de dag zelf. 1 tot 3 voegen zoveel dagen ervoor en erna toe.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">%1$d jaar geleden</item>
         <item quantity="other">%1$d jaar geleden</item>
@@ -1548,6 +1551,9 @@
     <string name="duplicates_filter_identical">Identiek</string>
     <string name="duplicates_filter_similar">Vergelijkbaar</string>
     <string name="duplicates_ignore_group">Negeren</string>
+    <string name="duplicates_delete_group">Groep verwijderen</string>
+    <string name="duplicates_confirm_title_whole">Alle kopieën verwijderen?</string>
+    <string name="duplicates_confirm_message_whole">Groep verwijderen wist elke kopie in die groep, dus geen van die foto\'s blijft over. Foto\'s buiten de geselecteerde groepen blijven ongemoeid.</string>
     <string name="duplicates_unignore_group">Niet meer negeren</string>
     <string name="duplicates_filter_ignored_label">Genegeerde groepen</string>
     <string name="duplicates_filter_ignored">Genegeerde tonen</string>
@@ -1769,6 +1775,14 @@
     <string name="settings_ai_indexing_paused_battery">Gepauzeerd, batterij bijna leeg</string>
     <string name="settings_ai_indexing_paused_warm">Gepauzeerd, telefoon is warm</string>
     <string name="settings_ai_indexing_paused_power_save">Gepauzeerd, batterijbesparing staat aan</string>
+    <string name="settings_ai_charging_only">Alleen tijdens het opladen</string>
+    <string name="settings_ai_charging_only_desc">Gezichtsherkenning en foto\'s zoeken wachten op de oplader.</string>
+    <string name="settings_time_format">Tijdnotatie</string>
+    <string name="settings_time_format_auto">Automatisch</string>
+    <string name="settings_time_format_auto_desc">Volgt de 12- of 24-uursinstelling van de telefoon</string>
+    <string name="settings_time_format_24h">24-uurs</string>
+    <string name="settings_time_format_12h">12-uurs</string>
+    <string name="settings_ai_indexing_paused_not_charging">Gepauzeerd, wacht op de oplader</string>
     <string name="settings_ai_indexing_paused_desc">Foto\'s worden niet op gezichten doorzocht totdat je hervat.</string>
     <string name="settings_ai_indexing_progress">%1$d van %2$d foto\'s</string>
     <plurals name="settings_ai_indexing_people">
@@ -1858,6 +1872,20 @@
     <string name="settings_ml_drive_save_desc">Slaat een versleutelde kopie op die je andere apparaten kunnen herstellen</string>
     <string name="settings_ml_drive_restore">Herstellen uit Drive</string>
     <string name="settings_ml_drive_restore_desc">Gebruikt de opgeslagen gegevens van een van je apparaten in plaats van opnieuw te scannen</string>
+    <string name="settings_autosave_title">Automatisch opslaan</string>
+    <string name="settings_autosave_desc">Houdt de kopie op Drive op de achtergrond actueel.</string>
+    <string name="settings_autosave_after_changes">Na wijzigingen</string>
+    <string name="settings_autosave_daily">Dagelijks</string>
+    <string name="settings_autosave_weekly">Wekelijks</string>
+    <string name="settings_autosave_after_changes_desc">Slaat ongeveer 10 minuten na de laatste wijziging op, hooguit één keer per uur.</string>
+    <string name="settings_autosave_daily_desc">Slaat elke nacht rond 23:59 op als er iets is gewijzigd.</string>
+    <string name="settings_autosave_weekly_desc">Slaat zondagnacht rond 23:59 op als er iets is gewijzigd.</string>
+    <string name="settings_autosave_last_saved">Laatst opgeslagen %1$s</string>
+    <string name="settings_autosave_failed">De laatste keer opslaan is niet voltooid. Er volgt een nieuwe poging.</string>
+    <string name="settings_autosave_confirm_title">Automatisch opslaan?</string>
+    <string name="settings_autosave_confirm_ml">Een versleutelde kopie van je gezichts- en zoekgegevens wordt op de achtergrond in je Proton Drive opgeslagen en actueel gehouden. Het gebruikt opslagruimte op Drive en mobiele data alleen als back-ups die mogen gebruiken. De eerste keer opslaan begint nu.</string>
+    <string name="settings_autosave_confirm_labels">Een versleutelde kopie van je labels wordt op de achtergrond in je Proton Drive opgeslagen en actueel gehouden. Het gebruikt opslagruimte op Drive en mobiele data alleen als back-ups die mogen gebruiken. De eerste keer opslaan begint nu.</string>
+    <string name="settings_autosave_confirm_on">Inschakelen</string>
     <string name="settings_ml_drive_step_preparing">Voorbereiden…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Gezichtsgegevens worden versleuteld…</string>
     <string name="settings_ml_drive_step_encrypting_search">Zoekgegevens worden versleuteld…</string>
@@ -2403,5 +2431,31 @@
     <string name="whats_new_260_frame_body">Plaats in de foto-editor een foto op een canvas met een andere vorm, zoals 1:1, 9:16 of Polaroid, gevuld met een kleur of een zachte vervaging. Het gereedschap is nog in ontwikkeling en er komen meer verbeteringen.</string>
     <string name="whats_new_260_drive_title">Gezichts- en zoekgegevens in Drive</string>
     <string name="whats_new_260_drive_body">Bewaar gezichtsnamen en zoekgegevens in Drive en zet ze terug op een andere telefoon, waarbij je kiest wat terugkomt, onder “Instellingen > Meer instellingen > Machine learning”.</string>
+    <string name="whats_new_260_autosave_title">Automatisch opslaan in Drive</string>
+    <string name="whats_new_260_autosave_body">Zet “Automatisch opslaan” aan bij de Drive-kopie van je gezichts- en zoekgegevens of van je labels, dan blijft de kopie op de achtergrond actueel: na wijzigingen, dagelijks of wekelijks. Je vindt ze onder “Instellingen > Meer instellingen”, bij “Machine learning” en “Labels”.</string>
+    <string name="whats_new_260_worldmap_title">Een rijkere wereldkaart</string>
+    <string name="whats_new_260_worldmap_body">De wereldkaart tekent nu landen- en provinciegrenzen, kleurt de provincie waar je foto\'s nam, noemt plaatsen terwijl je inzoomt en toont dezelfde markeringen als de klassieke kaart. Hij opent boven Europa, en bij verschuiven en knijpen blijft het punt onder je vingers op zijn plek.</string>
+    <string name="whats_new_260_time_title">Tijdnotatie</string>
+    <string name="whats_new_260_time_body">Kies hoe de tijd wordt getoond onder “Instellingen > Weergave &amp; taal > Tijdnotatie”: automatisch, 24-uurs of 12-uurs, los van de taal van de app. Automatisch volgt de klokinstelling van je telefoon.</string>
+    <string name="whats_new_260_onthisday_title">Dagen ervoor en erna</string>
+    <string name="whats_new_260_onthisday_body">“Op deze dag” toont nu alleen de dag zelf. Kies 0 tot 3 dagen ervoor en erna onder “Instellingen > Weergave &amp; taal > Bibliotheek > Tijdlijn > Op deze dag”.</string>
+    <string name="whats_new_260_duplicates_title">Duplicaten bekijken</string>
+    <string name="whats_new_260_duplicates_body">Knijp, sleep of dubbeltik om een kopie tot 6 keer te vergroten voordat je bepaalt wat er weg moet. “Groep verwijderen” selecteert alle kopieën van een groep in één keer.</string>
+    <string name="whats_new_260_intro_title">Bevat testversie 1</string>
+    <string name="whats_new_260_intro_body">Deze versie bevat ook alles uit testversie 1. De kaarten hierna tonen alleen wat sindsdien nieuw is.</string>
+    <string name="whats_new_260_addalbum_title">Toevoegen aan ander album</string>
+    <string name="whats_new_260_addalbum_body">Selecteer foto\'s in een album en kies “Toevoegen aan ander album” in de selectiebalk. Ze komen in het andere album en blijven in dit album, en in de kiezer kun je een nieuw album maken.</string>
+    <string name="whats_new_260_scans_title">Scans voor grote bibliotheken</string>
+    <string name="whats_new_260_scans_body">Bij bibliotheken met meer dan honderdduizend gezichten worden wachtende gezichten nu in porties bij bestaande personen geplaatst in plaats van ongegroepeerd te blijven, en foto\'s die op een nieuwe poging wachten overleven het afsluiten van de app.</string>
+    <string name="whats_new_260_dragselect_title">Slepend selecteren bij personen</string>
+    <string name="whats_new_260_dragselect_body">Houd een foto op de pagina van een persoon ingedrukt en sleep om een reeks te selecteren, zoals in de tijdlijn en albums.</string>
+    <string name="whats_new_260_mappins_title">Nettere kaartmarkeringen</string>
+    <string name="whats_new_260_mappins_body">Op de klassieke kaart en de wereldkaart wordt een markering die een grotere zou bedekken als klein puntje getoond, tot je zo ver inzoomt dat er ruimte is.</string>
+    <string name="whats_new_260_notif_title">Rustigere meldingen</string>
+    <string name="whats_new_260_notif_body">De melding “Zoeken naar nieuwe foto\'s…” knippert niet meer als je terugkeert naar de galerij.</string>
+    <string name="whats_new_260_tiles_title">Tegels op brede schermen</string>
+    <string name="whats_new_260_tiles_body">De snelkoppelingstegels bovenaan het tabblad Albums rekken op een breed scherm niet meer uit.</string>
+    <string name="whats_new_260_charging_title">Alleen tijdens het opladen</string>
+    <string name="whats_new_260_charging_body">Zet “Alleen tijdens het opladen” aan onder “Instellingen > Meer instellingen > Machine learning” om de scans voor gezichtsherkenning en foto\'s zoeken op de oplader te laten wachten. Een gepauzeerde scan meldt dat op zijn kaart.</string>
     <string name="whats_new_260_more">Daarnaast bewerkbare datums voor HEIC, GIF en RAW, groepen met duplicaten die je kunt negeren, een plaatskiezer op de kaart, Turks en nog veel meer fixes en stabiliteitsverbeteringen.</string>
 </resources>

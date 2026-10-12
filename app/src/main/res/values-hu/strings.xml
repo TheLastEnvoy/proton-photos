@@ -503,6 +503,7 @@
     <string name="album_rename_confirm">Átnevez</string>
     <string name="album_remove_from_album">Eltávolítás az albumból</string>
     <string name="album_move_to_album">Áthelyezés albumba</string>
+    <string name="album_add_to_other_album">Hozzáadás másik albumhoz</string>
     <string name="album_moved_to_album">Áthelyezve ide: \"%1$s\"</string>
     <string name="album_move_shared_copy_note">A megosztott albumhoz adott fotókról másolat készül az album tulajdonosának.</string>
     <string name="op_moving_to_album">Áthelyezés albumba…</string>
@@ -891,6 +892,8 @@
     </plurals>
 
     <string name="gallery_on_this_day">Ezen a napon</string>
+    <string name="settings_on_this_day_range">Napok előtte és utána</string>
+    <string name="settings_on_this_day_range_desc">A 0 csak magát a napot mutatja. Az 1-től 3-ig terjedő értékek ennyi napot adnak hozzá előtte és utána.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">%1$d éve</item>
         <item quantity="other">%1$d éve</item>
@@ -1558,6 +1561,9 @@
     <string name="duplicates_filter_identical">Azonos</string>
     <string name="duplicates_filter_similar">Hasonló</string>
     <string name="duplicates_ignore_group">Kihagyás</string>
+    <string name="duplicates_delete_group">Csoport törlése</string>
+    <string name="duplicates_confirm_title_whole">Törlöd az összes másolatot?</string>
+    <string name="duplicates_confirm_message_whole">A csoport törlése a csoport minden másolatát eltávolítja, így azokból a fotókból egy sem marad meg. A kijelölt csoportokon kívüli fotókhoz nem nyúl.</string>
     <string name="duplicates_unignore_group">Visszahozás</string>
     <string name="duplicates_filter_ignored_label">Kihagyott csoportok</string>
     <string name="duplicates_filter_ignored">Kihagyottak mutatása</string>
@@ -1741,6 +1747,14 @@
     <string name="settings_ai_indexing_paused_battery">Szüneteltetve, alacsony töltöttség</string>
     <string name="settings_ai_indexing_paused_warm">Szüneteltetve, a telefon meleg</string>
     <string name="settings_ai_indexing_paused_power_save">Szüneteltetve, energiatakarékos mód bekapcsolva</string>
+    <string name="settings_ai_charging_only">Csak töltés közben</string>
+    <string name="settings_ai_charging_only_desc">Az arcfelismerés és a fotókeresés megvárja a töltőt.</string>
+    <string name="settings_time_format">Időformátum</string>
+    <string name="settings_time_format_auto">Automatikus</string>
+    <string name="settings_time_format_auto_desc">A telefon 12 vagy 24 órás beállítását követi</string>
+    <string name="settings_time_format_24h">24 órás</string>
+    <string name="settings_time_format_12h">12 órás</string>
+    <string name="settings_ai_indexing_paused_not_charging">Szüneteltetve, töltőre vár</string>
     <string name="settings_ai_indexing_paused_desc">A folytatásig az alkalmazás nem keres arcokat a fotókon.</string>
     <string name="settings_ai_indexing_progress">%1$d / %2$d fotó</string>
     <plurals name="settings_ai_indexing_people">
@@ -1830,6 +1844,20 @@
     <string name="settings_ml_drive_save_desc">Titkosított másolatot ment, amelyet a többi eszközöd visszaállíthat</string>
     <string name="settings_ml_drive_restore">Visszaállítás a Drive-ról</string>
     <string name="settings_ml_drive_restore_desc">Egy eszközöd mentését tölti be az újravizsgálás helyett</string>
+    <string name="settings_autosave_title">Automatikus mentés</string>
+    <string name="settings_autosave_desc">A háttérben naprakészen tartja a Drive-másolatot.</string>
+    <string name="settings_autosave_after_changes">Változás után</string>
+    <string name="settings_autosave_daily">Naponta</string>
+    <string name="settings_autosave_weekly">Hetente</string>
+    <string name="settings_autosave_after_changes_desc">Az utolsó változás után nagyjából 10 perccel ment, óránként legfeljebb egyszer.</string>
+    <string name="settings_autosave_daily_desc">Minden éjjel 23:59 körül ment, ha változott valami.</string>
+    <string name="settings_autosave_weekly_desc">Vasárnap éjjel 23:59 körül ment, ha változott valami.</string>
+    <string name="settings_autosave_last_saved">Utoljára mentve: %1$s</string>
+    <string name="settings_autosave_failed">Az utolsó mentés nem fejeződött be. Újra megpróbálja.</string>
+    <string name="settings_autosave_confirm_title">Automatikus mentés?</string>
+    <string name="settings_autosave_confirm_ml">Az arc- és keresési adataid titkosított másolata a háttérben a Proton Drive-odra kerül, és naprakészen marad. Drive-tárhelyet használ, mobiladatot pedig csak akkor, ha a biztonsági mentések használhatják. Az első mentés most indul.</string>
+    <string name="settings_autosave_confirm_labels">A címkéid titkosított másolata a háttérben a Proton Drive-odra kerül, és naprakészen marad. Drive-tárhelyet használ, mobiladatot pedig csak akkor, ha a biztonsági mentések használhatják. Az első mentés most indul.</string>
+    <string name="settings_autosave_confirm_on">Bekapcsolás</string>
     <string name="settings_ml_drive_step_preparing">Előkészítés…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Arcadatok titkosítása…</string>
     <string name="settings_ml_drive_step_encrypting_search">Keresési adatok titkosítása…</string>
@@ -2375,5 +2403,31 @@
     <string name="whats_new_260_frame_body">A fotószerkesztőben helyezz egy fotót más alakú vászonra, például 1:1, 9:16 vagy Polaroid, színnel vagy lágy elmosással kitöltve. Az eszköz még fejlesztés alatt áll, további fejlesztések érkeznek.</string>
     <string name="whats_new_260_drive_title">Arc- és keresési adatok a Drive-on</string>
     <string name="whats_new_260_drive_body">Mentsd az arcnevek és a keresési adatok másolatát Drive-ra, és állítsd vissza egy másik telefonon, a visszatérő elemeket kiválasztva, itt: „Beállítások > További beállítások > Gépi tanulás”.</string>
+    <string name="whats_new_260_autosave_title">Automatikus mentés a Drive-ra</string>
+    <string name="whats_new_260_autosave_body">Kapcsold be a(z) „Automatikus mentés” kapcsolót az arc- és keresési adatok vagy a címkék Drive-másolatánál, és a másolat a háttérben naprakész marad: változás után, naponta vagy hetente. Itt találod: „Beállítások > További beállítások”, a(z) „Gépi tanulás” és a(z) „Címkék” részben.</string>
+    <string name="whats_new_260_worldmap_title">Gazdagabb világtérkép</string>
+    <string name="whats_new_260_worldmap_body">A világtérkép már az országok és tartományok határait is rajzolja, kiszínezi azt a tartományt, ahol fotóztál, nagyításkor kiírja a helyek nevét, és ugyanazokat a tűket mutatja, mint a klasszikus térkép. Európa felett nyílik meg, mozgatáskor és csippentéskor pedig az ujjaid alatti pont a helyén marad.</string>
+    <string name="whats_new_260_time_title">Időformátum</string>
+    <string name="whats_new_260_time_body">Itt választhatod ki, hogyan jelenjen meg az idő: „Beállítások > Megjelenés és nyelv > Időformátum”. Lehet automatikus, 24 órás vagy 12 órás, az alkalmazás nyelvétől függetlenül. Az automatikus a telefon saját óra-beállítását követi.</string>
+    <string name="whats_new_260_onthisday_title">Napok előtte és utána</string>
+    <string name="whats_new_260_onthisday_body">A(z) „Ezen a napon” mostantól csak magát a napot mutatja. A nap előtti és utáni 0–3 napot itt állíthatod: „Beállítások > Megjelenés és nyelv > Fotótár > Idővonal > Ezen a napon”.</string>
+    <string name="whats_new_260_duplicates_title">Duplikátumok áttekintése</string>
+    <string name="whats_new_260_duplicates_body">Csippentéssel, húzással vagy duplakoppintással akár 6-szorosára nagyíthatsz egy példányt, mielőtt döntesz a törlésről. A(z) „Csoport törlése” gomb a csoport összes példányát egyszerre kijelöli.</string>
+    <string name="whats_new_260_intro_title">Az 1. tesztverzió is benne van</string>
+    <string name="whats_new_260_intro_body">Ez a verzió az 1. tesztverzió összes újdonságát is tartalmazza. A következő kártyák csak az azóta újat mutatják.</string>
+    <string name="whats_new_260_addalbum_title">Hozzáadás másik albumhoz</string>
+    <string name="whats_new_260_addalbum_body">Jelölj ki fotókat egy albumban, és válaszd a(z) „Hozzáadás másik albumhoz” lehetőséget a kijelölősávban. A fotók a másik albumhoz is hozzáadódnak, ebben pedig megmaradnak, a választóban új albumot is létrehozhatsz.</string>
+    <string name="whats_new_260_scans_title">Vizsgálatok nagy könyvtáraknál</string>
+    <string name="whats_new_260_scans_body">A százezernél is több arcot tartalmazó könyvtáraknál a várakozó arcok már kötegekben kerülnek a meglévő személyekhez ahelyett, hogy csoportosítatlanok maradnának, az újrapróbálásra váró fotók pedig túlélik az alkalmazás bezárását.</string>
+    <string name="whats_new_260_dragselect_title">Húzásos kijelölés személynél</string>
+    <string name="whats_new_260_dragselect_body">Nyomj hosszan egy fotót egy személy oldalán, majd húzással jelölj ki egy tartományt, mint az idővonalon és az albumokban.</string>
+    <string name="whats_new_260_mappins_title">Rendezettebb térképtűk</string>
+    <string name="whats_new_260_mappins_body">A klasszikus és a világtérképen is kis ponttá válik az a tű, amely egy nagyobbat takarna, amíg annyira nem nagyítasz, hogy elférjen.</string>
+    <string name="whats_new_260_notif_title">Nyugodtabb értesítések</string>
+    <string name="whats_new_260_notif_body">A(z) „Új fotók keresése…” értesítés már nem villan fel, amikor visszatérsz a galériába.</string>
+    <string name="whats_new_260_tiles_title">Gyorsgombok széles képernyőn</string>
+    <string name="whats_new_260_tiles_body">Az Albumok fül tetején lévő gyorsgombok széles képernyőn már nem húzódnak szét.</string>
+    <string name="whats_new_260_charging_title">Csak töltés közben</string>
+    <string name="whats_new_260_charging_body">Kapcsold be a(z) „Csak töltés közben” kapcsolót itt: „Beállítások > További beállítások > Gépi tanulás”, hogy az arcfelismerés és a fotókeresés vizsgálata a töltőre várjon. A szüneteltetett vizsgálat ezt a kártyáján jelzi.</string>
     <string name="whats_new_260_more">Ráadásul szerkeszthető dátum HEIC, GIF és RAW fájloknál, figyelmen kívül hagyható duplikátumcsoportok, helyválasztó a térképen, török nyelv, és rengeteg további javítás és stabilitási fejlesztés.</string>
 </resources>

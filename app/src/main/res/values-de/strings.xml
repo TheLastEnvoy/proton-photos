@@ -480,6 +480,7 @@
     <string name="album_rename_confirm">Umbenennen</string>
     <string name="album_remove_from_album">Aus Album entfernen</string>
     <string name="album_move_to_album">In Album verschieben</string>
+    <string name="album_add_to_other_album">Zu anderem Album hinzufügen</string>
     <string name="album_moved_to_album">Verschoben nach \"%1$s\"</string>
     <string name="album_move_shared_copy_note">Zu einem geteilten Album hinzugefügte Fotos werden für den Albumbesitzer kopiert.</string>
     <string name="op_moving_to_album">Wird in Album verschoben…</string>
@@ -868,6 +869,8 @@
     </plurals>
 
     <string name="gallery_on_this_day">An diesem Tag</string>
+    <string name="settings_on_this_day_range">Tage davor und danach</string>
+    <string name="settings_on_this_day_range_desc">0 zeigt nur den Tag selbst. 1 bis 3 fügen so viele Tage davor und danach hinzu.</string>
     <plurals name="count_years_ago_plural">
         <item quantity="one">vor %1$d Jahr</item>
         <item quantity="other">vor %1$d Jahren</item>
@@ -1533,6 +1536,9 @@
     <string name="duplicates_filter_identical">Identisch</string>
     <string name="duplicates_filter_similar">Ähnlich</string>
     <string name="duplicates_ignore_group">Ignorieren</string>
+    <string name="duplicates_delete_group">Gruppe löschen</string>
+    <string name="duplicates_confirm_title_whole">Alle Kopien löschen?</string>
+    <string name="duplicates_confirm_message_whole">Gruppe löschen entfernt jede Kopie dieser Gruppe, sodass keines dieser Fotos übrig bleibt. Fotos außerhalb der gewählten Gruppen bleiben unberührt.</string>
     <string name="duplicates_unignore_group">Nicht mehr ignorieren</string>
     <string name="duplicates_filter_ignored_label">Ignorierte Gruppen</string>
     <string name="duplicates_filter_ignored">Ignorierte anzeigen</string>
@@ -1742,6 +1748,14 @@
     <string name="settings_ai_indexing_paused_battery">Pausiert, Akku niedrig</string>
     <string name="settings_ai_indexing_paused_warm">Pausiert, Telefon ist warm</string>
     <string name="settings_ai_indexing_paused_power_save">Pausiert, Energiesparmodus ist an</string>
+    <string name="settings_ai_charging_only">Nur beim Laden</string>
+    <string name="settings_ai_charging_only_desc">Gesichtserkennung und Fotosuche warten, bis das Ladegerät angeschlossen ist.</string>
+    <string name="settings_time_format">Zeitformat</string>
+    <string name="settings_time_format_auto">Automatisch</string>
+    <string name="settings_time_format_auto_desc">Folgt der 12- oder 24-Stunden-Einstellung des Telefons</string>
+    <string name="settings_time_format_24h">24-Stunden</string>
+    <string name="settings_time_format_12h">12-Stunden</string>
+    <string name="settings_ai_indexing_paused_not_charging">Pausiert, wartet auf das Ladegerät</string>
     <string name="settings_ai_indexing_paused_desc">Bis du fortsetzt, werden keine Fotos nach Gesichtern durchsucht.</string>
     <string name="settings_ai_indexing_progress">%1$d von %2$d Fotos</string>
     <plurals name="settings_ai_indexing_people">
@@ -1831,6 +1845,20 @@
     <string name="settings_ml_drive_save_desc">Speichert eine verschlüsselte Kopie, die deine anderen Geräte wiederherstellen können</string>
     <string name="settings_ml_drive_restore">Von Drive wiederherstellen</string>
     <string name="settings_ml_drive_restore_desc">Nutzt die gespeicherten Daten eines deiner Geräte, statt erneut zu scannen</string>
+    <string name="settings_autosave_title">Automatisch speichern</string>
+    <string name="settings_autosave_desc">Hält die Kopie in Drive im Hintergrund aktuell.</string>
+    <string name="settings_autosave_after_changes">Nach Änderungen</string>
+    <string name="settings_autosave_daily">Täglich</string>
+    <string name="settings_autosave_weekly">Wöchentlich</string>
+    <string name="settings_autosave_after_changes_desc">Speichert etwa 10 Minuten nach der letzten Änderung, höchstens einmal pro Stunde.</string>
+    <string name="settings_autosave_daily_desc">Speichert jede Nacht gegen 23:59, wenn sich etwas geändert hat.</string>
+    <string name="settings_autosave_weekly_desc">Speichert sonntags gegen 23:59, wenn sich etwas geändert hat.</string>
+    <string name="settings_autosave_last_saved">Zuletzt gespeichert %1$s</string>
+    <string name="settings_autosave_failed">Das letzte Speichern wurde nicht abgeschlossen. Es wird erneut versucht.</string>
+    <string name="settings_autosave_confirm_title">Automatisch speichern?</string>
+    <string name="settings_autosave_confirm_ml">Eine verschlüsselte Kopie deiner Gesichts- und Suchdaten wird im Hintergrund in dein Proton Drive gespeichert und aktuell gehalten. Sie belegt Speicherplatz in Drive und nutzt mobile Daten nur, wenn Backups sie nutzen dürfen. Das erste Speichern startet jetzt.</string>
+    <string name="settings_autosave_confirm_labels">Eine verschlüsselte Kopie deiner Labels wird im Hintergrund in dein Proton Drive gespeichert und aktuell gehalten. Sie belegt Speicherplatz in Drive und nutzt mobile Daten nur, wenn Backups sie nutzen dürfen. Das erste Speichern startet jetzt.</string>
+    <string name="settings_autosave_confirm_on">Einschalten</string>
     <string name="settings_ml_drive_step_preparing">Wird vorbereitet…</string>
     <string name="settings_ml_drive_step_encrypting_faces">Gesichtsdaten werden verschlüsselt…</string>
     <string name="settings_ml_drive_step_encrypting_search">Suchdaten werden verschlüsselt…</string>
@@ -2376,5 +2404,31 @@
     <string name="whats_new_260_frame_body">Setze im Foto-Editor ein Foto auf eine Leinwand anderer Form, etwa 1:1, 9:16 oder Polaroid, gefüllt mit einer Farbe oder einer weichen Unschärfe. Das Werkzeug ist noch in Arbeit, weitere Verbesserungen folgen.</string>
     <string name="whats_new_260_drive_title">Gesichts- und Suchdaten in Drive</string>
     <string name="whats_new_260_drive_body">Sichere Gesichtsnamen und Suchdaten in Drive und stelle sie auf einem anderen Telefon wieder her, wobei du wählst, was zurückkommt, unter „Einstellungen > Weitere Einstellungen > Maschinelles Lernen“.</string>
+    <string name="whats_new_260_autosave_title">Automatisch in Drive speichern</string>
+    <string name="whats_new_260_autosave_body">Schalte „Automatisch speichern“ bei der Drive-Kopie deiner Gesichts- und Suchdaten oder deiner Labels ein, dann bleibt die Kopie im Hintergrund aktuell: nach Änderungen, täglich oder wöchentlich. Du findest sie unter „Einstellungen > Weitere Einstellungen“, bei „Maschinelles Lernen“ und „Labels“.</string>
+    <string name="whats_new_260_worldmap_title">Eine reichere Weltkarte</string>
+    <string name="whats_new_260_worldmap_body">Die Weltkarte zeichnet jetzt Länder- und Provinzgrenzen, färbt die Provinz ein, in der du fotografiert hast, nennt beim Hineinzoomen die Orte und zeigt dieselben Pins wie die klassische Karte. Sie öffnet sich über Europa, und beim Verschieben und Zoomen bleibt der Punkt unter deinen Fingern an seinem Platz.</string>
+    <string name="whats_new_260_time_title">Zeitformat</string>
+    <string name="whats_new_260_time_body">Wie die Uhrzeit angezeigt wird, wählst du unter „Einstellungen > Darstellung &amp; Sprache > Zeitformat“: automatisch, 24-Stunden oder 12-Stunden, unabhängig von der App-Sprache. Automatisch folgt der Uhreinstellung deines Telefons.</string>
+    <string name="whats_new_260_onthisday_title">Tage davor und danach</string>
+    <string name="whats_new_260_onthisday_body">„An diesem Tag“ zeigt jetzt nur noch den Tag selbst. Wähle 0 bis 3 Tage davor und danach unter „Einstellungen > Darstellung &amp; Sprache > Bibliothek > Verlauf > An diesem Tag“.</string>
+    <string name="whats_new_260_duplicates_title">Duplikate prüfen</string>
+    <string name="whats_new_260_duplicates_body">Mit Zwei-Finger-Zoom, Ziehen oder Doppeltippen vergrößerst du eine Kopie bis auf das 6-Fache, bevor du entscheidest, was gelöscht wird. „Gruppe löschen“ markiert alle Kopien einer Gruppe auf einmal.</string>
+    <string name="whats_new_260_intro_title">Enthält Testversion 1</string>
+    <string name="whats_new_260_intro_body">Dieser Build enthält auch alles aus Testversion 1. Die folgenden Karten zeigen nur, was seitdem neu ist.</string>
+    <string name="whats_new_260_addalbum_title">Zu anderem Album hinzufügen</string>
+    <string name="whats_new_260_addalbum_body">Wähle in einem Album Fotos aus und tippe in der Auswahlleiste auf „Zu anderem Album hinzufügen“. Sie kommen ins andere Album und bleiben in diesem, und in der Auswahl lässt sich ein neues Album anlegen.</string>
+    <string name="whats_new_260_scans_title">Scans für große Bibliotheken</string>
+    <string name="whats_new_260_scans_body">Bei Bibliotheken mit über hunderttausend Gesichtern werden wartende Gesichter jetzt in Portionen den vorhandenen Personen zugeordnet, statt ungruppiert zu bleiben, und Fotos, die auf einen neuen Versuch warten, überstehen das Schließen der App.</string>
+    <string name="whats_new_260_dragselect_title">Wischauswahl bei Personen</string>
+    <string name="whats_new_260_dragselect_body">Halte auf der Seite einer Person ein Foto gedrückt und ziehe dann, um einen Bereich auszuwählen, wie im Verlauf und in Alben.</string>
+    <string name="whats_new_260_mappins_title">Aufgeräumtere Karten-Pins</string>
+    <string name="whats_new_260_mappins_body">Auf der klassischen Karte und der Weltkarte wird ein Pin, der einen größeren überdecken würde, als kleiner Punkt gezeigt, bis du so weit hineinzoomst, dass er Platz hat.</string>
+    <string name="whats_new_260_notif_title">Ruhigere Benachrichtigungen</string>
+    <string name="whats_new_260_notif_body">Die Benachrichtigung „Suche nach neuen Fotos…“ blinkt nicht mehr auf, wenn du zur Galerie zurückkehrst.</string>
+    <string name="whats_new_260_tiles_title">Kacheln auf breiten Bildschirmen</string>
+    <string name="whats_new_260_tiles_body">Die Kacheln oben im Tab Alben ziehen sich auf einem breiten Bildschirm nicht mehr auseinander.</string>
+    <string name="whats_new_260_charging_title">Nur beim Laden</string>
+    <string name="whats_new_260_charging_body">Schalte „Nur beim Laden“ unter „Einstellungen > Weitere Einstellungen > Maschinelles Lernen“ ein, damit Gesichtserkennung und Fotosuche-Scans aufs Ladegerät warten. Ein pausierter Scan sagt das auf seiner Karte.</string>
     <string name="whats_new_260_more">Dazu bearbeitbare Daten bei HEIC, GIF und RAW, Duplikatgruppen zum Ignorieren, eine Ortsauswahl auf der Karte, Türkisch und viele weitere Korrekturen und Stabilitätsverbesserungen.</string>
 </resources>
