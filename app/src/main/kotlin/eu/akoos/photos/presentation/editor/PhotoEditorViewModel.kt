@@ -158,6 +158,12 @@ data class TextItem(
     val sizeFraction: Float,
     /** Rotation in degrees, applied around the text centre. Snaps to 45-degree detents while dragging. */
     val rotation: Float = 0f,
+    /** The colour of the box behind the text, as ARGB; only its colour counts, [backgroundOpacity] is the alpha. */
+    val background: Int = android.graphics.Color.BLACK,
+    /** How opaque the box behind the text is, 0 (none) to 1. */
+    val backgroundOpacity: Float = 0f,
+    /** How round the corners of that box are, 0 (square) to 1 (fully rounded ends). */
+    val cornerRadius: Float = 0.3f,
 )
 
 /** One HSL colour band (red..magenta). [hue]/[sat]/[light] are -100..100 and only affect pixels near
@@ -1259,12 +1265,11 @@ class PhotoEditorViewModel @Inject constructor(
 
     fun selectTextItem(id: Int?) = _state.update { it.copy(selectedTextId = id) }
 
-    /** Enter/leave the Text tool. Re-renders the preview so the baked text clears (entering: the overlay
-     *  draws it live) or reappears (leaving). Not an undo step; it is only a preview-mode toggle. */
+    /** Enter/leave the Text tool. Not an undo step, and no render: the preview never bakes the text
+     *  ([forPreview] strips it), so a render here only swapped the preview bitmap under the text and made it flash. */
     fun setTextToolActive(active: Boolean) {
         if (_state.value.textToolActive == active) return
         _state.update { it.copy(textToolActive = active) }
-        updateAdjustmentsNoUndo { it }
     }
 
     /** Strip the pen strokes and text overlays from EVERY preview render, so they live as a Compose layer
@@ -1289,6 +1294,15 @@ class PhotoEditorViewModel @Inject constructor(
             ) else t
         }))
     }
+    /** One tick of a style change on text [id], a colour or a background, applied at once and without a render, since
+     *  the overlay draws the text live. [commitTextMove] folds the whole gesture into one undo entry. */
+    fun updateTextItemLive(id: Int, change: (TextItem) -> TextItem) = _state.update { s ->
+        if (textMoveSnapshot == null) textMoveSnapshot = s.adjustments
+        s.copy(adjustments = s.adjustments.copy(textItems = s.adjustments.textItems.map { t ->
+            if (t.id == id) change(t) else t
+        }))
+    }
+
     fun commitTextMove() {
         val snap = textMoveSnapshot ?: return
         textMoveSnapshot = null
@@ -1910,6 +1924,14 @@ class PhotoEditorViewModel @Inject constructor(
             canvas.save()
             val angle = snapTextAngle(item.rotation)
             if (angle != 0f) canvas.rotate(angle, cxPx, cyPx)
+            if (item.hasBackground()) {
+                val box = textBackdrop(paint.textSize, lines.maxOf { paint.measureText(it) }, lines.size, item.cornerRadius)
+                val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = textBackgroundArgb(item) }
+                canvas.drawRoundRect(
+                    cxPx - box.halfWidth, cyPx - box.halfHeight, cxPx + box.halfWidth, cyPx + box.halfHeight,
+                    box.radius, box.radius, fill,
+                )
+            }
             var baseline = cyPx - totalH / 2f + paint.textSize
             for (line in lines) {
                 canvas.drawText(line, cxPx, baseline, paint)
