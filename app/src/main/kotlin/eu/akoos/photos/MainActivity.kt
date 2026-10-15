@@ -50,7 +50,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
-import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -409,31 +408,33 @@ class MainActivity : AppCompatActivity() {
                     }
                     val forceUpdate by forceUpdateFlow.collectAsState(initial = false)
 
-                    when {
-                        forceUpdate -> ForceUpdateDialog()
-                        else -> {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (forceUpdate) {
+                            ForceUpdateDialog()
+                        } else {
                             // App lock is drawn as an OVERLAY over the nav graph, not as a branch that
                             // replaces it. Gating NavGraph out of composition disposed its NavController
                             // and back stack, so unlocking re-entered at the start destination and the
                             // startup router popped to the gallery instead of returning where the user
                             // was. AppLockScreen is opaque, FLAG_SECURE, and consumes all input, so it
                             // fully covers the content (and the recents preview) with the route intact.
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                NavGraph(
-                                    onStartLogin = { authOrchestrator.startLoginWorkflow(null) },
-                                    onCheckForUpdates = { runManualUpdateCheck() },
-                                    widgetPhotoUri = widgetPhotoUri,
-                                    onWidgetPhotoConsumed = { widgetPhotoUri = null },
-                                    externalEditRequest = externalEditRequest,
-                                    onExternalEditConsumed = { externalEditRequest = null },
-                                )
-                                UpdaterHost()
-                                if (isLocked) AppLockScreen(onUnlocked = {
-                                    lastUnlockMs = System.currentTimeMillis()
-                                    isLocked = false
-                                })
-                            }
+                            NavGraph(
+                                onStartLogin = { authOrchestrator.startLoginWorkflow(null) },
+                                onCheckForUpdates = { runManualUpdateCheck() },
+                                widgetPhotoUri = widgetPhotoUri,
+                                onWidgetPhotoConsumed = { widgetPhotoUri = null },
+                                externalEditRequest = externalEditRequest,
+                                onExternalEditConsumed = { externalEditRequest = null },
+                            )
+                            if (isLocked) AppLockScreen(onUnlocked = {
+                                lastUnlockMs = System.currentTimeMillis()
+                                isLocked = false
+                            })
                         }
+                        // Kept outside the force-update branch: an update started from that screen must
+                        // still surface its download/install prompt, which used to be composed only in
+                        // the NavGraph branch.
+                        UpdaterHost()
                     }
                   }
                 }
@@ -543,21 +544,25 @@ class MainActivity : AppCompatActivity() {
 
     @androidx.compose.runtime.Composable
     private fun ForceUpdateDialog() {
+        val scope = rememberCoroutineScope()
         Box(Modifier.fillMaxSize()) {
             ConfirmDialog(
                 title = androidx.compose.ui.res.stringResource(eu.akoos.photos.R.string.force_update_title),
                 message = androidx.compose.ui.res.stringResource(eu.akoos.photos.R.string.force_update_body),
                 confirmLabel = androidx.compose.ui.res.stringResource(eu.akoos.photos.R.string.force_update_action),
-                dismissLabel = null,
-                onConfirm = {
-                    val intent = android.content.Intent(
-                        android.content.Intent.ACTION_VIEW,
-                        "market://details?id=$packageName".toUri(),
-                    )
-                    runCatching { startActivity(intent) }
-                    finish()
+                dismissLabel = androidx.compose.ui.res.stringResource(eu.akoos.photos.R.string.force_update_retry),
+                // In-app updater, not the Play Store: the app ships from GitHub releases, so
+                // market://details?id=eu.akoos.photos resolved to nothing. UpdaterHost() is composed
+                // alongside this sheet, so its download/install prompt can surface.
+                onConfirm = { runManualUpdateCheck() },
+                onDismiss = {
+                    // Retry: drop the latch and continue. The next Proton call re-evaluates the version
+                    // gate, so a still-blocked client shows this sheet again instead of trapping the user
+                    // on it forever.
+                    scope.launch {
+                        eu.akoos.photos.data.api.PhotosApiClient.clearForceUpdate(this@MainActivity)
+                    }
                 },
-                onDismiss = { /* non-dismissible */ },
             )
         }
     }

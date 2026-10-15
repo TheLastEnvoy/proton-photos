@@ -113,6 +113,12 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
         appScope.launch {
             runCatching { eu.akoos.photos.util.CrashLogStore.pruneToVersion(filesDir, BuildConfig.VERSION_CODE) }
         }
+        // Release a force-update latch left by an older build. The next Proton request re-evaluates
+        // the version gate, so a genuinely blocked client is re-latched immediately; an updated one
+        // proceeds instead of being stranded on the "update required" screen.
+        appScope.launch {
+            runCatching { eu.akoos.photos.data.api.PhotosApiClient.clearStaleForceUpdate(this@App) }
+        }
         if (BuildConfig.DEBUG) {
             android.os.StrictMode.setVmPolicy(
                 android.os.StrictMode.VmPolicy.Builder()

@@ -1288,6 +1288,7 @@
     <string name="force_update_title">Vyžaduje sa aktualizácia</string>
     <string name="force_update_body">Táto verzia už nie je podporovaná. Na pokračovanie aktualizujte, prosím.</string>
     <string name="force_update_action">Aktualizovať</string>
+    <string name="force_update_retry">Skúsiť znova</string>
     <string name="notifications_title">Oznámenia</string>
     <string name="notifications_subtitle">Vyberte, ktoré oznámenia môže aplikácia zobrazovať. Všetko je v predvolenom nastavení zapnuté.</string>
     <string name="notifications_nav_desc">Vyberte, ktoré oznámenia uvidíte</string>

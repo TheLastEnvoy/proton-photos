@@ -1079,6 +1079,7 @@
     <string name="force_update_title">Update vereist</string>
     <string name="force_update_body">Deze versie wordt niet meer ondersteund. Werk bij om door te gaan.</string>
     <string name="force_update_action">Bijwerken</string>
+    <string name="force_update_retry">Opnieuw</string>
     <string name="notifications_title">Meldingen</string>
     <string name="notifications_subtitle">Kies welke meldingen de app mag tonen. Alles staat standaard aan.</string>
     <string name="notifications_nav_desc">Kies welke meldingen je ziet</string>

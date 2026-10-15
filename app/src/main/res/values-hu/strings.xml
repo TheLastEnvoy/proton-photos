@@ -1086,6 +1086,7 @@
     <string name="force_update_title">Frissítés szükséges</string>
     <string name="force_update_body">Ez a verzió már nem támogatott. A folytatáshoz frissítsd az appot.</string>
     <string name="force_update_action">Frissítés</string>
+    <string name="force_update_retry">Újra</string>
     <string name="notifications_title">Értesítések</string>
     <string name="notifications_subtitle">Válaszd ki, mely értesítéseket jelenítheti meg az alkalmazás. Alapból minden be van kapcsolva.</string>
     <string name="notifications_nav_desc">Válaszd ki, mely értesítéseket látod</string>

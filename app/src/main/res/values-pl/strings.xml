@@ -1288,6 +1288,7 @@
     <string name="force_update_title">Wymagana aktualizacja</string>
     <string name="force_update_body">Ta wersja nie jest już obsługiwana. Zaktualizuj, aby kontynuować.</string>
     <string name="force_update_action">Aktualizuj</string>
+    <string name="force_update_retry">Spróbuj ponownie</string>
     <string name="notifications_title">Powiadomienia</string>
     <string name="notifications_subtitle">Wybierz, które powiadomienia aplikacja może pokazywać. Domyślnie wszystko jest włączone.</string>
     <string name="notifications_nav_desc">Wybierz, które powiadomienia widzisz</string>

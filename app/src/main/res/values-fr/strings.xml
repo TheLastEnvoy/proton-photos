@@ -1063,6 +1063,7 @@
     <string name="force_update_title">Mise à jour requise</string>
     <string name="force_update_body">Cette version n\'est plus prise en charge. Veuillez mettre à jour pour continuer.</string>
     <string name="force_update_action">Mettre à jour</string>
+    <string name="force_update_retry">Réessayer</string>
     <string name="notifications_title">Notifications</string>
     <string name="notifications_subtitle">Choisissez les notifications que l\'application peut afficher. Tout est activé par défaut.</string>
     <string name="notifications_nav_desc">Choisissez les notifications que vous voyez</string>

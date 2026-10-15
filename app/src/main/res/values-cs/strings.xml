@@ -1288,6 +1288,7 @@
     <string name="force_update_title">Vyžadována aktualizace</string>
     <string name="force_update_body">Tato verze již není podporována. Pro pokračování aktualizujte.</string>
     <string name="force_update_action">Aktualizovat</string>
+    <string name="force_update_retry">Zkusit znovu</string>
     <string name="notifications_title">Oznámení</string>
     <string name="notifications_subtitle">Vyberte, která oznámení smí aplikace zobrazovat. Ve výchozím nastavení je vše zapnuté.</string>
     <string name="notifications_nav_desc">Vyberte, která oznámení uvidíte</string>

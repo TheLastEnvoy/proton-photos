@@ -1076,6 +1076,7 @@
     <string name="force_update_title">Actualización requerida</string>
     <string name="force_update_body">Esta versión ya no es compatible. Actualiza para continuar.</string>
     <string name="force_update_action">Actualizar</string>
+    <string name="force_update_retry">Reintentar</string>
     <string name="notifications_title">Notificaciones</string>
     <string name="notifications_subtitle">Elige qué notificaciones puede mostrar la aplicación. Todo está activado de forma predeterminada.</string>
     <string name="notifications_nav_desc">Elige qué notificaciones ves</string>

@@ -1063,6 +1063,7 @@
     <string name="force_update_title">Update erforderlich</string>
     <string name="force_update_body">Diese Version wird nicht mehr unterstützt. Bitte aktualisieren, um fortzufahren.</string>
     <string name="force_update_action">Aktualisieren</string>
+    <string name="force_update_retry">Wiederholen</string>
     <string name="notifications_title">Benachrichtigungen</string>
     <string name="notifications_subtitle">Lege fest, welche Benachrichtigungen die App anzeigen darf. Standardmäßig ist alles aktiviert.</string>
     <string name="notifications_nav_desc">Wähle, welche Benachrichtigungen du siehst</string>

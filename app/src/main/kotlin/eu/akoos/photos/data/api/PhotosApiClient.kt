@@ -25,6 +25,7 @@ package eu.akoos.photos.data.api
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,13 @@ import javax.inject.Singleton
 
 /** DataStore key written when the server returns FORCE_UPDATE; observed by UI to show a dialog. */
 val FORCE_UPDATE_REQUIRED = booleanPreferencesKey("force_update_required")
+
+/**
+ * Build ([BuildConfig.VERSION_CODE]) that last tripped FORCE_UPDATE. Recorded so
+ * [PhotosApiClient.clearStaleForceUpdate] can release the latch once the user installs a newer
+ * build, instead of stranding them on the "update required" screen forever.
+ */
+val FORCE_UPDATE_VERSION_CODE = intPreferencesKey("force_update_version_code")
 
 @Singleton
 class PhotosApiClient @Inject constructor(
@@ -62,13 +70,43 @@ class PhotosApiClient @Inject constructor(
     override suspend fun shouldUseDoh(): Boolean = true
 
     override fun forceUpdate(errorMessage: String) {
-        // Persist the flag so MainActivity can show a non-dismissible "please update" dialog.
+        // Persist the flag so MainActivity can show the update dialog. The build that tripped it is
+        // recorded too, so a later (higher) build clears the latch instead of inheriting it.
         scope.launch {
-            context.settingsDataStore.edit { it[FORCE_UPDATE_REQUIRED] = true }
+            context.settingsDataStore.edit {
+                it[FORCE_UPDATE_REQUIRED] = true
+                it[FORCE_UPDATE_VERSION_CODE] = BuildConfig.VERSION_CODE
+            }
         }
     }
 
-    private companion object {
+    companion object {
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        /**
+         * Releases a force-update latch recorded by an *older* build (or by a legacy install that
+         * predates [FORCE_UPDATE_VERSION_CODE], read as `null`). Proton evaluates its version gate on
+         * every request, so the updated client is re-checked on its next call and the flag is set
+         * again if it is still rejected. Called once per launch from [eu.akoos.photos.App]; a no-op
+         * while the latch belongs to the running build.
+         */
+        suspend fun clearStaleForceUpdate(context: Context) {
+            context.settingsDataStore.edit { prefs ->
+                if (prefs[FORCE_UPDATE_REQUIRED] == true &&
+                    prefs[FORCE_UPDATE_VERSION_CODE] != BuildConfig.VERSION_CODE
+                ) {
+                    prefs[FORCE_UPDATE_REQUIRED] = false
+                    prefs.remove(FORCE_UPDATE_VERSION_CODE)
+                }
+            }
+        }
+
+        /** User-initiated "Retry": drops the latch and lets the next request decide again. */
+        suspend fun clearForceUpdate(context: Context) {
+            context.settingsDataStore.edit { prefs ->
+                prefs[FORCE_UPDATE_REQUIRED] = false
+                prefs.remove(FORCE_UPDATE_VERSION_CODE)
+            }
+        }
     }
 }

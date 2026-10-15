@@ -1289,6 +1289,7 @@
     <string name="force_update_title">Posodobitev je obvezna</string>
     <string name="force_update_body">Ta različica ni več podprta. Za nadaljevanje posodobite.</string>
     <string name="force_update_action">Posodobi</string>
+    <string name="force_update_retry">Poskusi znova</string>
     <string name="notifications_title">Obvestila</string>
     <string name="notifications_subtitle">Izberite, katera obvestila lahko aplikacija prikaže. Privzeto je vse vklopljeno.</string>
     <string name="notifications_nav_desc">Izberite, katera obvestila vidite</string>

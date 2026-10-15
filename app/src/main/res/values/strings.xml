@@ -1696,6 +1696,7 @@
     <string name="force_update_title">Update required</string>
     <string name="force_update_body">This version is no longer supported. Please update to continue.</string>
     <string name="force_update_action">Update</string>
+    <string name="force_update_retry">Retry</string>
     <string name="notifications_title">Notifications</string>
     <string name="notifications_subtitle">Choose which notifications the app may show. Everything is on by default.</string>
     <string name="notifications_nav_desc">Choose which notifications you see</string>
