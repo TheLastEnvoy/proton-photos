@@ -31,7 +31,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        minSdk = 28
+        minSdk = 29
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Macrobenchmark refuses to run on an emulator or a debuggable app by default

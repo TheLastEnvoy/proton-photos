@@ -74,6 +74,7 @@
     <string name="sign_in_unofficial_tag">Aplicación no oficial de terceros, no afiliada con Proton AG</string>
     <string name="sign_in_button">Iniciar sesión</string>
     <string name="sign_in_footer">Inicio de sesión seguro con tu cuenta de Proton</string>
+    <string name="auth_drive_scope_required">Esta cuenta de Proton no tiene el acceso necesario a Proton Drive.</string>
 
     <!-- Gallery -->
     <string name="gallery_empty_title">Aún no hay fotos</string>

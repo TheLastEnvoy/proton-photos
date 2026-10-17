@@ -94,6 +94,7 @@
     <string name="sign_in_unofficial_tag">Nem hivatalos, harmadik féltől származó alkalmazás, nem áll kapcsolatban a Proton AG-vel</string>
     <string name="sign_in_button">Bejelentkezés</string>
     <string name="sign_in_footer">Biztonságos belépés Proton-fiókkal</string>
+    <string name="auth_drive_scope_required">Ez a Proton-fiók nem rendelkezik a Proton Drive használatához szükséges hozzáféréssel.</string>
 
     <!-- Gallery -->
     <string name="gallery_empty_title">Még nincsenek fotók</string>

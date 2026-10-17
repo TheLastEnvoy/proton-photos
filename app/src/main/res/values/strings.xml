@@ -94,6 +94,7 @@
     <string name="sign_in_unofficial_tag">Unofficial third-party app, not affiliated with Proton AG</string>
     <string name="sign_in_button">Sign in</string>
     <string name="sign_in_footer">Secure login with your Proton account</string>
+    <string name="auth_drive_scope_required">This Proton account does not have the access required to use Proton Drive.</string>
     <string name="sign_in_continue_without_account">Continue without account</string>
 
     <!-- Gallery -->

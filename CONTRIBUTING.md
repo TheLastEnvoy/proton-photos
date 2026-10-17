@@ -14,7 +14,7 @@ By contributing you agree that your contributions are licensed under GPL-3.0.
 - Jetpack Compose for UI
 - AndroidX Media3 (ExoPlayer) for video
 - Namespace and applicationId: `eu.akoos.photos`
-- Minimum supported Android: 8.0 (API 26)
+- Minimum supported Android: 10 (API 29; required by the Proton Drive SDK Kotlin binding)
 
 ## Getting started
 
@@ -25,7 +25,7 @@ By contributing you agree that your contributions are licensed under GPL-3.0.
    ```
    ./gradlew :app:assembleDebug
    ```
-5. Run on an emulator or a physical device on Android 8.0 (API 26) or newer.
+5. Run on an emulator or a physical device on Android 10 (API 29) or newer.
 
 ## Before you open a pull request
 

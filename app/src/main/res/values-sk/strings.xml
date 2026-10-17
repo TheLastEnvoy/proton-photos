@@ -73,6 +73,7 @@
     <string name="sign_in_unofficial_tag">Neoficiálna aplikácia tretej strany, bez prepojenia s Proton AG</string>
     <string name="sign_in_button">Prihlásiť sa</string>
     <string name="sign_in_footer">Bezpečné prihlásenie pomocou vášho účtu Proton</string>
+    <string name="auth_drive_scope_required">Tento účet Proton nemá potrebný prístup k Proton Drive.</string>
 
     <!-- Gallery -->
     <string name="gallery_empty_title">Zatiaľ žiadne fotky</string>

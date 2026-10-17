@@ -36,6 +36,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -44,6 +46,11 @@ import kotlinx.coroutines.withContext
 import me.proton.core.crypto.common.context.CryptoContext
 import me.proton.core.domain.entity.UserId
 import me.proton.core.network.data.ApiProvider
+import me.proton.drive.sdk.UploadController
+import me.proton.drive.sdk.Uploader
+import me.proton.drive.sdk.entity.PhotoTag
+import me.proton.drive.sdk.entity.PhotosUploaderRequest
+import me.proton.drive.sdk.entity.ThumbnailType
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.flow.first
 import eu.akoos.photos.data.api.DriveApiService
@@ -74,6 +81,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import me.proton.core.crypto.common.pgp.SessionKey
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -81,6 +89,7 @@ import java.io.FileInputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
+import java.nio.channels.Channels
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -230,17 +239,14 @@ private fun isRetryableUploadFailure(e: Throwable): Boolean {
 }
 
 /**
- * Per-file streaming upload pipeline.
- *
- * Memory profile: each 4 MB block is encrypted, signed, hashed, verifier-token-computed,
- * then spilled to `cacheDir/upload_$fileId/block_$idx.enc`. Per-block metadata
- * (file ref, signature, hash, verifier, encrypted size) lives in heap as O(N × ~256 B).
- * The CDN upload loop reads each block off disk just before the PUT and deletes it
- * after success. try/finally wipes tempDir on every exit path.
+ * Photo uploads use Proton Drive SDK for draft creation, encryption, block transfer, verification,
+ * and commit. App-specific metadata/tag selection and immediate local indexing remain here. The
+ * previous direct-API uploader is retained temporarily below as a migration reference, not called.
  */
 @Singleton
 class PhotoUploadService @Inject constructor(
     private val apiProvider: ApiProvider,
+    private val sdkClients: ProtonDriveSdkClientManager,
     private val cryptoHelper: DriveCryptoHelper,
     private val cryptoContext: CryptoContext,
     private val photoListingDao: PhotoListingDao,
@@ -255,15 +261,212 @@ class PhotoUploadService @Inject constructor(
 ) {
     private val semaphore get() = shareService.networkSemaphore
 
-    // Per-file CDN/encrypt semaphores are allocated INSIDE uploadFile() (not as instance
-    // fields) so a single big video can't hold all the slots and starve sibling photo uploads
-    // running in parallel. The global cryptoLock in DriveCryptoHelper still serialises PGP work.
-
     /**
-     * Encrypts and uploads [item] to the Photos volume. [sha1HexContentDigest] MUST be the
-     * lowercase SHA-1 hex of the plaintext bytes (see [DrivePhotoRepository.uploadFile]).
+     * Uploads [item] through Proton's SDK while keeping app-specific local indexing and progress.
+     * [sha1HexContentDigest] must be the lowercase SHA-1 hex of the plaintext bytes.
      */
     suspend fun uploadFile(
+        userId: UserId,
+        item: LocalMediaItem,
+        sha1HexContentDigest: String,
+        uploadUri: String,
+        xAttrMetadata: UploadXAttrMetadata = UploadXAttrMetadata(),
+        onProgress: ((phase: UploadPhase, doneBytes: Long, totalBytes: Long) -> Unit)? = null,
+    ): String = uploadFileWithSdk(userId, item, sha1HexContentDigest, uploadUri, xAttrMetadata, onProgress)
+
+    private suspend fun uploadFileWithSdk(
+        userId: UserId,
+        item: LocalMediaItem,
+        sha1HexContentDigest: String,
+        uploadUri: String,
+        xAttrMetadata: UploadXAttrMetadata,
+        onProgress: ((phase: UploadPhase, doneBytes: Long, totalBytes: Long) -> Unit)?,
+    ): String = withContext(Dispatchers.IO) {
+        val logRef = eu.akoos.photos.util.uploadLogRef(item.uri)
+        val uploadUriParsed = Uri.parse(uploadUri)
+        val uploadSize = sourceSizeBytes(uploadUriParsed) ?: item.sizeBytes
+        val sourceUri = Uri.parse(item.uri)
+        val detectedTags = PhotoTagDetector.detectTags(
+            context,
+            sourceUri,
+            item.mimeType,
+            item.displayName,
+            sourceSizeBytes(sourceUri) ?: item.sizeBytes,
+        )
+        val selectedTags = try {
+            UserPhotoTags.decode(localTagDao.getUserTagsCsv(item.uri))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "uploadFile: selected categories unreadable for $logRef: ${e.message}")
+            emptySet()
+        }
+        val photoTags = UploadPhotoTags.mergeForCommit(detectedTags, selectedTags)
+            .mapNotNull { PhotoTag.fromLong(it.toLong()) }
+
+        val supportsThumbnail = item.mimeType.startsWith("image/") || item.mimeType.startsWith("video/")
+        val defaultThumbnail = if (supportsThumbnail) {
+            runCatching { generateThumbnailBytes(uploadUri, item.mimeType, THUMBNAIL_DEFAULT_MAX_PX) }
+                .getOrNull()
+        } else null
+        val needsPreview = item.mimeType.startsWith("image/") &&
+            (item.width > THUMBNAIL_PHOTO_MAX_PX || item.height > THUMBNAIL_PHOTO_MAX_PX ||
+                (item.width == 0 && item.height == 0))
+        val previewThumbnail = if (needsPreview) {
+            runCatching {
+                generateImageThumbnailBytes(
+                    uploadUri,
+                    item.mimeType,
+                    THUMBNAIL_PHOTO_MAX_PX,
+                    THUMBNAIL_PHOTO_MAX_BYTES,
+                )
+            }.getOrNull()
+        } else null
+        val thumbnails = buildMap {
+            defaultThumbnail?.let { put(ThumbnailType.THUMBNAIL, it) }
+            previewThumbnail?.let { put(ThumbnailType.PREVIEW, it) }
+        }
+
+        val request = PhotosUploaderRequest(
+            name = item.displayName,
+            mediaType = item.mimeType,
+            fileSize = uploadSize,
+            lastModificationTime = Instant.ofEpochMilli(item.dateTaken),
+            captureTime = Instant.ofEpochMilli(item.dateTaken),
+            tags = photoTags,
+            overrideExistingDraftByOtherClient = false,
+            additionalMetadata = buildSdkAdditionalMetadata(item, xAttrMetadata),
+        )
+        val input = context.contentResolver.openInputStream(uploadUriParsed)
+            ?: error("Cannot open upload content for $logRef")
+        var sdkUploader: Uploader? = null
+        var controller: UploadController? = null
+        try {
+            val activeUploader = sdkClients.photosClient(userId).uploader(request)
+            sdkUploader = activeUploader
+            onProgress?.invoke(UploadPhase.Uploading, 0L, uploadSize)
+            val uploadResult = coroutineScope {
+                val active = activeUploader.uploadFromStream(
+                    coroutineScope = this,
+                    channel = Channels.newChannel(input),
+                    thumbnails = thumbnails,
+                    sha1Provider = { sha1HexContentDigest.decodeHex() },
+                )
+                controller = active
+                val progressJob = launch {
+                    active.progressFlow.collect { progress ->
+                        if (progress != null) {
+                            onProgress?.invoke(
+                                UploadPhase.Uploading,
+                                progress.bytesCompleted,
+                                progress.bytesInTotal ?: uploadSize,
+                            )
+                        }
+                    }
+                }
+                try {
+                    active.awaitCompletion()
+                } finally {
+                    progressJob.cancel()
+                }
+            }
+
+            val fileId = sdkNodeLinkId(uploadResult.nodeUid)
+            val revisionId = sdkRevisionId(uploadResult.revisionUid)
+            val volumeId = shareService.getVolumeId(userId)
+            val shareId = shareService.getShareId(userId, volumeId)
+            recentUploadsTracker.record(fileId)
+            val thumbnailUrl = defaultThumbnail?.let { bytes ->
+                runCatching {
+                    val directory = File(context.cacheDir, "thumbnails").also { it.mkdirs() }
+                    val file = File(directory, "thumb_$fileId.jpg")
+                    file.writeBytes(bytes)
+                    "file://${file.absolutePath}"
+                }.onFailure { Log.w(TAG, "uploadFile: local thumbnail cache failed: ${it.message}") }
+                    .getOrNull()
+            }
+            runCatching {
+                photoListingDao.upsertAll(
+                    listOf(
+                        PhotoListingEntity(
+                            linkId = fileId,
+                            shareId = shareId,
+                            volumeId = volumeId,
+                            userId = userId.id,
+                            captureTime = item.dateTaken / 1000L,
+                            displayName = item.displayName,
+                            mimeType = item.mimeType,
+                            sizeBytes = uploadSize,
+                            revisionId = revisionId,
+                            thumbnailUrl = thumbnailUrl,
+                            tagsCsv = photoTags.map { it.value.toInt() }.sorted().joinToString(","),
+                            durationMs = item.duration.takeIf { item.mimeType.startsWith("video/") && it > 0 },
+                        ),
+                    ),
+                )
+                thumbnailUrl?.let { thumbnailUrlStore.put(fileId, it) }
+            }.onFailure { Log.w(TAG, "uploadFile: local listing seed failed for $logRef: ${it.message}") }
+            withContext(NonCancellable) {
+                carryFavoriteToCloud(userId, item.uri, item, fileId, shareId, volumeId, revisionId)
+            }
+            onProgress?.invoke(UploadPhase.Uploading, uploadSize, uploadSize)
+            Log.d(TAG, "uploadFile: Drive SDK upload committed for $logRef")
+            fileId
+        } catch (e: CancellationException) {
+            controller?.let { runCatching { it.cancel() } }
+            throw e
+        } finally {
+            runCatching { controller?.close() }
+            runCatching { sdkUploader?.close() }
+            runCatching { input.close() }
+        }
+    }
+
+    /** Additional xAttr fields are JSON values, matching the SDK's JSON-extension metadata format. */
+    private fun buildSdkAdditionalMetadata(
+        item: LocalMediaItem,
+        metadata: UploadXAttrMetadata,
+    ): Map<String, ByteArray> = buildMap {
+        val media = JSONObject()
+            .put("Width", metadata.displayWidth ?: item.width)
+            .put("Height", metadata.displayHeight ?: item.height)
+            .put("Duration", (metadata.durationMillis ?: item.duration) / 1000.0)
+        put("Media", media.toString().toByteArray(Charsets.UTF_8))
+
+        if (metadata.latitude != null && metadata.longitude != null) {
+            put(
+                "Location",
+                JSONObject()
+                    .put("Latitude", metadata.latitude)
+                    .put("Longitude", metadata.longitude)
+                    .toString().toByteArray(Charsets.UTF_8),
+            )
+        }
+
+        val camera = JSONObject()
+        metadata.cameraCaptureTimeIso?.let { camera.put("CaptureTime", it) }
+        metadata.cameraDevice?.let { camera.put("Device", it) }
+        metadata.cameraOrientation?.let { camera.put("Orientation", it) }
+        metadata.subjectCoordinates?.takeIf { it.size == 4 }?.let { rect ->
+            camera.put(
+                "SubjectCoordinates",
+                JSONObject()
+                    .put("Top", rect[0])
+                    .put("Left", rect[1])
+                    .put("Bottom", rect[2])
+                    .put("Right", rect[3]),
+            )
+        }
+        if (camera.length() > 0) put("Camera", camera.toString().toByteArray(Charsets.UTF_8))
+    }
+
+    private fun String.decodeHex(): ByteArray {
+        require(length % 2 == 0) { "SHA-1 digest must have an even number of hex characters" }
+        return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
+
+    /** Legacy direct-API implementation retained temporarily while SDK parity is verified. */
+    private suspend fun uploadFileLegacy(
         userId: UserId,
         item: LocalMediaItem,
         sha1HexContentDigest: String,

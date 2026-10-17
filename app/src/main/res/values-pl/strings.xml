@@ -73,6 +73,7 @@
     <string name="sign_in_unofficial_tag">Nieoficjalna aplikacja innej firmy, niepowiązana z Proton AG</string>
     <string name="sign_in_button">Zaloguj się</string>
     <string name="sign_in_footer">Bezpieczne logowanie przy użyciu konta Proton</string>
+    <string name="auth_drive_scope_required">To konto Proton nie ma wymaganego dostępu do Proton Drive.</string>
 
     <!-- Gallery -->
     <string name="gallery_empty_title">Brak zdjęć</string>

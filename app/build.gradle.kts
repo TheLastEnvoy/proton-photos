@@ -36,13 +36,14 @@ android {
         // me.proton.* applicationId would imply association the project doesn't have.
         // The Kotlin/Java package namespace is eu.akoos.photos to match the applicationId.
         applicationId = "eu.akoos.photos"
-        minSdk = 26
+        // Proton Drive's current Kotlin SDK binding requires API 29+.
+        minSdk = 29
         targetSdk = 35
         // versionCode bumped per release tag — keep monotonically increasing.
         // versionName mirrors the GitHub release tag (e.g. v2.0.0 → "2.0.0") so the About
         // screen and the published APK report the same version the user downloaded.
-        versionCode = 272
-        versionName = "2.5.0"
+        versionCode = 275
+        versionName = "2.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -108,7 +109,8 @@ android {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            // The Proton Drive SDK native runtime does not publish a 32-bit x86 binary.
+            include("armeabi-v7a", "arm64-v8a", "x86_64")
             isUniversalApk = true
         }
     }
@@ -184,9 +186,10 @@ dependencies {
     implementation(libs.proton.account.recovery.data)
     implementation(libs.proton.country.data)
     implementation(libs.proton.push.data)
+    implementation(libs.proton.drive.sdk)
 
     // Override the transitively-pulled gopenpgp JNI artifact to the latest stable
-    // build on Maven Central. ProtonCore 36.6.0 pins `me.proton.crypto:android-golib`
+    // build on Maven Central. ProtonCore 36.7.0 pins `me.proton.crypto:android-golib`
     // at the 2.9.0-2 build, whose gopenpgp Go runtime defaults to SHA-256 for the
     // self-cert and subkey-binding signatures emitted by `generateNewPrivateKey`.
     // Drive web's recipient-side `openpgp.js` rejects SHA-256 binding signatures,

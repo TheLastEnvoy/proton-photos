@@ -3,7 +3,8 @@ agp = "8.7.3"
 kotlin = "2.2.21"
 ksp = "2.2.21-2.0.5"
 hilt = "2.58"
-protonCore = "36.6.0"
+protonCore = "36.7.0"
+protonDriveSdk = "0.31.1-rust"
 room = "2.7.1"
 lifecycle = "2.8.3"
 navigation = "2.8.4"
@@ -91,6 +92,7 @@ proton-event-manager-data = { module = "me.proton.core:event-manager-data", vers
 proton-account-recovery-data = { module = "me.proton.core:account-recovery-data", version.ref = "protonCore" }
 proton-country-data = { module = "me.proton.core:country-data", version.ref = "protonCore" }
 proton-push-data = { module = "me.proton.core:push-data", version.ref = "protonCore" }
+proton-drive-sdk = { module = "me.proton.drive:sdk", version.ref = "protonDriveSdk" }
 
 # Hilt
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }

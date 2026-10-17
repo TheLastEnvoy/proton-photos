@@ -73,6 +73,7 @@
     <string name="sign_in_unofficial_tag">Onofficiële externe app, niet verbonden met Proton AG</string>
     <string name="sign_in_button">Aanmelden</string>
     <string name="sign_in_footer">Veilig aanmelden met je Proton-account</string>
+    <string name="auth_drive_scope_required">Dit Proton-account heeft niet de benodigde toegang tot Proton Drive.</string>
 
     <!-- Gallery -->
     <string name="gallery_empty_title">Nog geen foto\'s</string>

@@ -30,12 +30,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import me.proton.core.crypto.common.pgp.SessionKey
 import me.proton.core.domain.entity.UserId
 import me.proton.core.network.data.ApiProvider
+import me.proton.drive.sdk.DownloadController
+import me.proton.drive.sdk.Downloader
+import me.proton.drive.sdk.entity.PhotosDownloaderRequest
 import eu.akoos.photos.data.api.DriveApiService
 import eu.akoos.photos.data.api.dto.BatchLinkDto
 import eu.akoos.photos.data.api.dto.RevisionBlockDto
@@ -44,6 +49,8 @@ import eu.akoos.photos.data.crypto.DriveCryptoHelper
 import eu.akoos.photos.data.db.dao.PhotoListingDao
 import eu.akoos.photos.domain.entity.CloudPhoto
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.channels.Channels
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -61,15 +68,15 @@ private const val BLOCK_PARALLELISM = 4
 private const val DEFAULT_BLOCK_SIZE = 4L * 1024 * 1024
 
 /**
- * Full-res photo download.
- *
- * Delegates the raw CDN byte fetch to [CdnBlockFetcher] (which holds the pinned
- * [@CdnOkHttpClient] client) because content blocks need `pm-storage-token` headers
- * instead of `Authorization: Bearer`, bypassing the ApiProvider stack.
+ * Full-resolution downloads use the Proton Drive SDK for metadata resolution, encrypted block
+ * transfer, decryption and integrity verification. This service retains app-level single-flight,
+ * cache publication and progress behavior. The former direct-API implementation remains below as a
+ * migration reference and is not called by the active path.
  */
 @Singleton
 class PhotoDownloadService @Inject constructor(
     private val apiProvider: ApiProvider,
+    private val sdkClients: ProtonDriveSdkClientManager,
     private val cryptoHelper: DriveCryptoHelper,
     private val cryptoServiceClient: CryptoServiceClient,
     private val shareService: PhotosShareService,
@@ -169,7 +176,91 @@ class PhotoDownloadService @Inject constructor(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun doDownload(
+        userId: UserId,
+        photo: CloudPhoto,
+        preResolvedLinkDetail: BatchLinkDto? = null,
+        onProgress: ((doneBytes: Long, totalBytes: Long) -> Unit)? = null,
+    ): File = withContext(Dispatchers.IO) {
+        val cacheDirectory = File(context.cacheDir, "fullres").also { it.mkdirs() }
+        val extension = eu.akoos.photos.util.mimeToFileExtension(photo.mimeType)
+        val outputFile = File(cacheDirectory, "${photo.linkId}.$extension")
+        val temporaryFile = File(cacheDirectory, "${photo.linkId}.$extension.tmp")
+
+        if (outputFile.exists() && outputFile.length() > 0L &&
+            (photo.sizeBytes == 0L || outputFile.length() == photo.sizeBytes)
+        ) {
+            onProgress?.invoke(outputFile.length(), outputFile.length())
+            return@withContext outputFile
+        }
+        outputFile.delete()
+        temporaryFile.delete()
+
+        val downloader: Downloader = sdkClients.photosClient(userId)
+            .downloader(
+                PhotosDownloaderRequest(
+                    sdkNodeUid(
+                        photo.volumeId.ifEmpty { shareService.getVolumeId(userId) },
+                        photo.linkId,
+                    ),
+                ),
+            )
+        var controller: DownloadController? = null
+        try {
+            FileOutputStream(temporaryFile).use { output ->
+                coroutineScope {
+                    val active = downloader.downloadToStream(this, Channels.newChannel(output))
+                    controller = active
+                    val progressJob = launch {
+                        active.progressFlow.collect { progress ->
+                            if (progress != null) {
+                                onProgress?.invoke(
+                                    progress.bytesCompleted,
+                                    progress.bytesInTotal ?: photo.sizeBytes,
+                                )
+                            }
+                        }
+                    }
+                    try {
+                        active.awaitCompletion()
+                    } finally {
+                        progressJob.cancel()
+                    }
+                }
+            }
+
+            check(temporaryFile.exists() && temporaryFile.length() > 0L) {
+                "Drive SDK completed an empty download for ${photo.linkId}"
+            }
+            if (photo.sizeBytes > 0L) {
+                check(temporaryFile.length() == photo.sizeBytes) {
+                    "Drive SDK download size mismatch for ${photo.linkId}: " +
+                        "got ${temporaryFile.length()} bytes, expected ${photo.sizeBytes}"
+                }
+            }
+            check(temporaryFile.renameTo(outputFile)) {
+                "Could not atomically publish downloaded file ${photo.linkId}"
+            }
+            onProgress?.invoke(outputFile.length(), outputFile.length())
+            outputFile
+        } catch (t: Throwable) {
+            temporaryFile.delete()
+            if (t is kotlinx.coroutines.CancellationException) {
+                controller?.let { runCatching { it.cancel() } }
+            }
+            throw t
+        } finally {
+            runCatching { controller?.close() }
+            runCatching { downloader.close() }
+        }
+    }
+
+    /**
+     * The former implementation below is retained as a comparison/reference during the migration.
+     * Active downloads now go through the Proton Drive SDK's crypto, verification, and CDN pipeline.
+     */
+    private suspend fun doDownloadLegacy(
         userId: UserId,
         photo: CloudPhoto,
         preResolvedLinkDetail: BatchLinkDto? = null,

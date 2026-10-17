@@ -59,7 +59,10 @@ class PhotosApiClient @Inject constructor(
     }
     override val enableDebugLogging = BuildConfig.DEBUG
 
-    override suspend fun shouldUseDoh(): Boolean = true
+    // Match the production Proton Drive Android client. ProtonCore DoH is alternative API
+    // routing, not ordinary DNS-over-HTTPS: it can persist an alternate API host for up to
+    // 90 minutes after a connection failure. Keep authentication on the primary Drive API.
+    override suspend fun shouldUseDoh(): Boolean = false
 
     override fun forceUpdate(errorMessage: String) {
         // Persist the flag so MainActivity can show a non-dismissible "please update" dialog.

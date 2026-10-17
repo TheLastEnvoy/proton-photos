@@ -28,7 +28,6 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
-import me.proton.core.auth.domain.usecase.PostLoginAccountSetup
 import me.proton.core.auth.presentation.HelpOptionHandler
 import me.proton.core.biometric.domain.AuthenticatorsResolver
 import me.proton.core.biometric.domain.BiometricAuthenticator
@@ -66,7 +65,6 @@ import me.proton.core.push.domain.entity.PushId
 import me.proton.core.push.domain.entity.PushObjectType
 import me.proton.core.push.domain.remote.PushRemoteDataSource
 import me.proton.core.push.domain.repository.PushRepository
-import me.proton.core.user.domain.entity.User
 import java.util.Optional
 import javax.inject.Singleton
 
@@ -79,14 +77,6 @@ object StubModule {
     fun provideFeatureFlagOverrider(): FeatureFlagOverrider =
         object : FeatureFlagOverrider {
             override fun getOverrideOrNull(key: String): Boolean? = null
-        }
-
-    // Auth — post-login user check (accepts all users)
-    @Provides @Singleton
-    fun providePostLoginUserCheck(): PostLoginAccountSetup.UserCheck =
-        object : PostLoginAccountSetup.UserCheck {
-            override suspend fun invoke(user: User): PostLoginAccountSetup.UserCheckResult =
-                PostLoginAccountSetup.UserCheckResult.Success
         }
 
     @Provides @Singleton

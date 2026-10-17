@@ -78,6 +78,7 @@ import javax.inject.Singleton
 @Singleton
 class DrivePhotoRepositoryImpl @Inject constructor(
     private val cryptoHelper: DriveCryptoHelper,
+    private val sdkClients: eu.akoos.photos.data.repository.drive.ProtonDriveSdkClientManager,
     private val shareService: PhotosShareService,
     private val albumService: AlbumService,
     private val streamService: PhotoStreamService,
@@ -481,6 +482,8 @@ class DrivePhotoRepositoryImpl @Inject constructor(
         // sign-out route reaches this method (explicit sign-out, force-logout, 2FA and key-check
         // failures all converge on onAccountDisabled), so this is the one place that covers them.
         runCatching { streamService.cancelRefreshFor(userId) }
+        // Close the SDK's native client and per-user coroutine scope before key/session teardown.
+        runCatching { sdkClients.remove(userId) }
         // Stop the background face-indexing walk and drop its in-session state BEFORE the rows below
         // are wiped, so it is already standing down when the wipe lands and writes no face for the
         // account that is leaving. Face embeddings are biometric data, so the rows go with the session.

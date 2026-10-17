@@ -74,6 +74,7 @@
     <string name="sign_in_unofficial_tag">Neuradna aplikacija tretje osebe, ni povezana s Proton AG</string>
     <string name="sign_in_button">Prijava</string>
     <string name="sign_in_footer">Varna prijava z vašim računom Proton</string>
+    <string name="auth_drive_scope_required">Ta račun Proton nima potrebnega dostopa do Proton Drive.</string>
 
     <!-- Gallery -->
     <string name="gallery_empty_title">Še ni fotografij</string>

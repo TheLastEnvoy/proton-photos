@@ -6,7 +6,7 @@
 
 <p align="center">
   End-to-end encrypted photo backup and browsing for your Proton Drive Photos library.<br />
-  <strong>Unofficial</strong> open-source Android client built against the publicly documented Drive API by
+  <strong>Unofficial</strong> open-source Android client using Proton's incubating Drive SDK and documented API by
   <a href="https://akoos.eu">Akoos</a>. Not affiliated with Proton AG.
 </p>
 
@@ -14,7 +14,7 @@
   <a href="https://github.com/gitakoos/proton-photos/releases/latest"><img src="https://img.shields.io/github/v/release/gitakoos/proton-photos?label=release&color=blue" alt="Release" /></a>
   <a href="https://github.com/gitakoos/proton-photos/releases"><img src="https://img.shields.io/github/downloads/gitakoos/proton-photos/total?label=downloads&color=8B7CFF" alt="Downloads" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-green" alt="License" /></a>
-  <img src="https://img.shields.io/badge/minSdk-26-orange" alt="Min SDK" />
+  <img src="https://img.shields.io/badge/minSdk-29-orange" alt="Min SDK" />
   <a href="https://www.photosforproton.eu"><img src="https://img.shields.io/badge/website-photosforproton.eu-8B7CFF" alt="Website" /></a>
 </p>
 
@@ -50,7 +50,7 @@ Clean architecture in a single module, with strict one-way layer dependencies:
 |---|---|---|
 | **Presentation** | Jetpack Compose screens, ViewModels, navigation, theme | Domain |
 | **Domain** | Entities, repository interfaces, use cases, pure Kotlin, no Android imports | none |
-| **Data** | Drive API client, crypto wrapper, Room database, DataStore, repository implementations, WorkManager workers | Domain |
+| **Data** | Proton Drive SDK client, documented-API compatibility layer, crypto wrapper, Room database, DataStore, repositories and WorkManager workers | Domain |
 
 Hilt binds the Data implementations to the Domain interfaces; every Proton Drive feature lives under `data/repository/drive/` (detailed below).
 
@@ -118,15 +118,19 @@ app/src/main/kotlin/eu/akoos/photos/
 - Kotlin · Jetpack Compose · Material 3
 - Hilt (DI) · Room (DB) · Coil (images) · OkHttp + Retrofit (network) · Media3/ExoPlayer (video) · [osmdroid](https://github.com/osmdroid/osmdroid) (map tiles)
 - Offline place names from the [GeoNames](https://www.geonames.org/) cities15000 dataset (CC BY 4.0), bundled under `app/src/main/assets`
-- [ProtonCore Android](https://github.com/ProtonMail/protoncore_android) (GPL-3.0) + [GoOpenPGP](https://github.com/ProtonMail/gopenpgp) for auth, keys, crypto
+- [ProtonCore Android](https://github.com/ProtonMail/protoncore_android) (GPL-3.0) for auth, keys, and network
+- [Proton Drive SDK Kotlin bindings](https://github.com/ProtonDriveApps/sdk/tree/main/incubating/client/kt) (`me.proton.drive:sdk:0.31.1-rust`, GPL-3.0; incubating) for the Photos operations exposed by the binding
+- [GoOpenPGP](https://github.com/ProtonMail/gopenpgp) for app-specific album sharing and crypto operations not exposed by the current Kotlin SDK API
 - Drive API reference: [ProtonDriveApps/android-drive](https://github.com/ProtonDriveApps/android-drive)
-- Min SDK 26 (Android 8) · Target SDK 35
+- Min SDK 29 (Android 10; required by the current Proton Drive SDK Android binding) · Target SDK 35 · ABIs: `armeabi-v7a`, `arm64-v8a`, `x86_64` (32-bit `x86` is not supported by the SDK)
 
 ## What's reused vs. what's built here
 
-This project **uses the published `me.proton.core:*` libraries as-is** (no forks, no modifications). All Drive feature code is written from scratch against the publicly documented Drive API. Requests carry a client-specific app-version / User-Agent so Proton's servers see this independent client for what it is, rather than impersonating the official app.
+This project **uses the published `me.proton.core:*` libraries and Proton Drive SDK as-is** (no forks, no modifications). The Kotlin binding is incubating. The app uses it for Photos upload/download, tag updates, trash and permanent deletion. Restore remains on the documented API because Proton's restore endpoint has returned misleading per-link failures for successful restores, which the SDK currently maps as failures. Stream and album hydration, album CRUD/membership, link metadata needed by the app's encrypted thumbnail/cache pipeline, and sharing/invitation management also remain compatibility paths until the SDK binding exposes equivalent behavior and the app can validate parity. Authentication remains ProtonCore-based—the Drive SDK does not provide sign-in. Requests carry this app's own app-version / User-Agent; the client does not impersonate the official app.
 
-**ProtonCore modules consumed** (all `me.proton.core:*` v36.6.0, GPL-3.0, via Maven Central; see `gradle/libs.versions.toml` for the exact list):
+**ProtonCore modules consumed** (all `me.proton.core:*` v36.7.0, GPL-3.0, via Maven Central; see `gradle/libs.versions.toml` for the exact list):
+
+**Proton Drive SDK**: `me.proton.drive:sdk:0.31.1-rust` (Kotlin binding, incubating, Maven Central).
 
 - Auth & account: `auth`, `account`, `account-manager`, `user`, `human-verification`
 - Crypto & keys: `crypto`, `crypto-android`, `key`

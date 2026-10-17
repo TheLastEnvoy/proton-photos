@@ -302,6 +302,12 @@ fun SettingsScreen(
             }.getOrDefault("")
             val sync = if (eu.akoos.photos.util.SyncDiagnostics.isEmpty()) ""
                 else eu.akoos.photos.util.SyncDiagnostics.dump()
+            // Record the actual API host as well as path/code so a failed login can be distinguished
+            // between the primary Drive API and a cached ProtonCore alternative route.
+            val apiFailures = runCatching {
+                eu.akoos.photos.data.api.ApiFailureRecorder.file(context)
+                    .takeIf { it.exists() }?.readText()?.trim()
+            }.getOrNull().orEmpty()
             // Live heap / RAM / library-size snapshot plus the perf ring buffer. Numbers,
             // counts, and flags only (mirrors SyncDiagnostics) so nothing identifies the account.
             val perfSnapshot = eu.akoos.photos.util.PerfDiagnostics.snapshot(context)
@@ -337,6 +343,10 @@ fun SettingsScreen(
                 if (crashLog.isNotBlank()) {
                     if (isNotEmpty()) append("\n\n")
                     append("Crashes:\n").append(crashLog.trim())
+                }
+                if (apiFailures.isNotBlank()) {
+                    if (isNotEmpty()) append("\n\n")
+                    append("API failures:\n").append(apiFailures)
                 }
                 if (isEmpty()) append("no log yet")
             }

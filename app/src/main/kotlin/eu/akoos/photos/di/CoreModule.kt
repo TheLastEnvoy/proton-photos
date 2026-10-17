@@ -85,6 +85,8 @@ object CoreModule {
     @Provides
     @Singleton
     @DohProviderUrls
+    // Kept configured for ProtonCore, but PhotosApiClient.shouldUseDoh() stays false to match
+    // the production Drive client and avoid sticky alternate API routes during authentication.
     fun provideDohProviderUrls(): Array<String> = arrayOf(
         // Quad9 + Cloudflare (no-logging). Google is deliberately excluded — every lookup would
         // advertise the user's interest in Proton to Google's logs.
@@ -175,7 +177,7 @@ object CoreModule {
 
     @Provides
     @Singleton
-    fun provideAccountType(): AccountType = AccountType.Internal
+    fun provideRequiredAccountType(): AccountType = AccountType.External
 
     @Provides
     @Singleton
